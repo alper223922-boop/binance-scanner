@@ -14,8 +14,6 @@ import numpy as np
 import requests
 from telegram import Bot
 from telegram.constants import ParseMode
-import schedule
-import threading
 from dotenv import load_dotenv
 
 # .env dosyasini yukle
@@ -483,6 +481,6 @@ async def run_scan():
 
     log.info("Tum mesajlar gonderildi [OK]")
 
-# ─── ZAMANLAYICI ────────────────────────────────────────────────
 if __name__ == "__main__":
+    log.info("Scanner basliyor...")
     asyncio.run(run_scan())
