@@ -484,19 +484,5 @@ async def run_scan():
     log.info("Tum mesajlar gonderildi [OK]")
 
 # ─── ZAMANLAYICI ────────────────────────────────────────────────
-def run_scheduled():
-    asyncio.run(run_scan())
-
-def start_scheduler():
-    log.info(f"Zamanlayici baslatildi: Her {SCAN_INTERVAL_MINUTES} dakikada bir")
-    schedule.every(SCAN_INTERVAL_MINUTES).minutes.do(run_scheduled)
-
-    log.info("Ilk tarama baslatiliyor...")
-    run_scheduled()
-
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
-
 if __name__ == "__main__":
-    start_scheduler()
+    asyncio.run(run_scan())
