@@ -25,4 +25,6 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SCAN_INTERVAL: "0"
           TIMEFRAME: "1h"
+          MIN_VOLUME_USDT: "5000000"
+          PYTHONIOENCODING: "utf-8"
         run: python scanner.py
