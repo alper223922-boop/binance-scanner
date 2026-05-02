@@ -27,4 +27,5 @@ jobs:
           TIMEFRAME: "1h"
           MIN_VOLUME_USDT: "5000000"
           PYTHONIOENCODING: "utf-8"
+          BINANCE_PROXY: "https://binance-proxy.alper223922.workers.dev"
         run: python scanner.py
