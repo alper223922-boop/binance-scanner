@@ -1,16 +1,16 @@
 name: Binance Scanner
-
+ 
 on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
-
+ 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
+ 
       - name: API erisim testi
         run: |
           echo "=== Binance ==="
@@ -25,15 +25,15 @@ jobs:
           echo "=== Gate.io ==="
           curl -s -o /dev/null -w "%{http_code}" https://api.gateio.ws/api/v4/futures/usdt/contracts?limit=1
           echo ""
-
+ 
       - name: Python kur
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
+ 
       - name: Bagimliliklar
         run: pip install -r requirements.txt
-
+ 
       - name: Scanner calistir
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
