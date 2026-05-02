@@ -24,6 +24,6 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TIMEFRAME: "1H"
-          MIN_VOLUME_USDT: "5000000"
+          MIN_VOLUME_USDT: "1000000"
           PYTHONIOENCODING: "utf-8"
         run: python scanner.py
