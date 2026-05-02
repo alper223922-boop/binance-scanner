@@ -46,32 +46,12 @@ stream_handler.setFormatter(log_formatter)
 logging.basicConfig(level=logging.INFO, handlers=[file_handler, stream_handler])
 log = logging.getLogger(__name__)
 
-# Binance bazi bölgelerde engelliyor - yedek adresler
-BINANCE_BASES = [
-    "https://fapi.binance.com",
-    "https://fapi1.binance.com",
-    "https://fapi2.binance.com",
-    "https://fapi3.binance.com",
-]
-BINANCE_BASE = BINANCE_BASES[0]
-
-def get_working_base():
-    """Calisan Binance endpoint bul"""
-    for base in BINANCE_BASES:
-        try:
-            r = requests.get(f"{base}/fapi/v1/ping", timeout=5)
-            if r.status_code == 200:
-                log.info(f"Binance endpoint: {base}")
-                return base
-        except:
-            continue
-    raise Exception("Hic bir Binance endpoint erisilebilir degil!")
+# Cloudflare Worker proxy - GitHub Actions icin Binance engeli asma
+BINANCE_BASE = os.getenv("BINANCE_PROXY", "https://fapi.binance.com")
 
 # ─── BİNANCE API ────────────────────────────────────────────────
 def get_futures_symbols():
     """Tum aktif USDT vadeli sembolleri al"""
-    global BINANCE_BASE
-    BINANCE_BASE = get_working_base()
     r = requests.get(f"{BINANCE_BASE}/fapi/v1/exchangeInfo", timeout=10)
     r.raise_for_status()
     symbols = [
