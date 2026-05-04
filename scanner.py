@@ -46,12 +46,8 @@ def get_symbols():
     symbols = [d["symbol"] for d in data if d.get("settleCurrency") == "USDT"]
     log.info(f"Toplam: {len(data)}, USDT: {len(symbols)}")
     if not symbols:
-        log.warning(f"Ornek: {data[:2] if data else 'bos'}")
+        log.warning(f"Ornek: {data[:2] if data else bos}")
     return symbols
-log.info(f"Toplam sembol (filtre oncesi): {len(data)}, USDT: {len(symbols)}")
-if not symbols:
-    log.warning(f"Ornek veri: {data[:2] if data else 'bos'}")
-return symbols
 
 def get_klines(symbol, interval="Min60", limit=200):
     url = f"{MEXC_BASE}/api/v1/contract/kline/{symbol}"
