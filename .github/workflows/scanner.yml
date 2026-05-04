@@ -1,7 +1,4 @@
-name: MEXC test
-        run: |
-          curl -s -o /dev/null -w "%{http_code}" https://contract.mexc.com/api/v1/contract/detail
-          echo " MEXC"
+name: Binance Scanner
 
 on:
   schedule:
@@ -12,6 +9,15 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
+      - name: API test
+        run: |
+          echo "MEXC:"
+          curl -s -o /dev/null -w "%{http_code}" https://contract.mexc.com/api/v1/contract/detail
+          echo ""
+          echo "OKX:"
+          curl -s -o /dev/null -w "%{http_code}" https://www.okx.com/api/v5/public/instruments?instType=SWAP
+          echo ""
+
       - uses: actions/checkout@v4
 
       - name: Python kur
