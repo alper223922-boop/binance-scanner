@@ -9,10 +9,6 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: MEXC kline test
-        run: |
-          curl -s "https://contract.mexc.com/api/v1/contract/kline/BTC_USDT?interval=Min60&limit=3"
-
       - uses: actions/checkout@v4
 
       - name: Python kur
