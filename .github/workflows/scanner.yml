@@ -1,4 +1,7 @@
-name: Binance Scanner
+name: MEXC test
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" https://contract.mexc.com/api/v1/contract/detail
+          echo " MEXC"
 
 on:
   schedule:
