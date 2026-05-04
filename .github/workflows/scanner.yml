@@ -9,14 +9,9 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: API test
+      - name: MEXC kline test
         run: |
-          echo "MEXC:"
-          curl -s -o /dev/null -w "%{http_code}" https://contract.mexc.com/api/v1/contract/detail
-          echo ""
-          echo "OKX:"
-          curl -s -o /dev/null -w "%{http_code}" https://www.okx.com/api/v5/public/instruments?instType=SWAP
-          echo ""
+          curl -s "https://contract.mexc.com/api/v1/contract/kline/BTC_USDT?interval=Min60&limit=3"
 
       - uses: actions/checkout@v4
 
@@ -32,7 +27,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TIMEFRAME: "1H"
+          TIMEFRAME: "Min60"
           MIN_VOLUME_USDT: "1000000"
           PYTHONIOENCODING: "utf-8"
         run: python scanner.py
