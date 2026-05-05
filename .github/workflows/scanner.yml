@@ -9,6 +9,10 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
+      - name: MEXC ticker debug
+        run: |
+          curl -s "https://contract.mexc.com/api/v1/contract/ticker?symbol=BTC_USDT"
+
       - uses: actions/checkout@v4
 
       - name: Python kur
