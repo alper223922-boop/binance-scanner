@@ -168,9 +168,9 @@ def analyze(symbol, df, ticker):
     add("ADX", f"{av:.0f}", "long" if av>25 and pdi.iloc[-1]>mdi.iloc[-1] else ("short" if av>25 and mdi.iloc[-1]>pdi.iloc[-1] else "neutral"))
 
     try:
-        op = float(ticker.get("openPrice", price))
-        pc = (price-op)/op*100
-        v24 = float(ticker.get("amount24", 0))
+        # MEXC ticker alanlari: lastPrice, riseFallRate, volume24, amount24
+        pc  = float(ticker.get("riseFallRate", 0)) * 100  # zaten yuzde olarak geliyor
+        v24 = float(ticker.get("amount24", ticker.get("volume24", 0)))
     except:
         pc = 0; v24 = 0
 
