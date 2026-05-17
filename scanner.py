@@ -123,6 +123,32 @@ def calc_adx(high, low, close, p=14):
     dx  = 100*(pdi-mdi).abs()/(pdi+mdi+1e-10)
     return dx.rolling(p).mean(), pdi, mdi
 
+def calc_fibonacci(high, low, close, period=50):
+    """Son N mumun high/low'una gore Fibonacci seviyeleri"""
+    hh = high.rolling(period).max().iloc[-1]
+    ll = low.rolling(period).min().iloc[-1]
+    price = close.iloc[-1]
+    diff = hh - ll
+    if diff == 0:
+        return "neutral", "0.5"
+    levels = {
+        "0.236": hh - 0.236 * diff,
+        "0.382": hh - 0.382 * diff,
+        "0.500": hh - 0.500 * diff,
+        "0.618": hh - 0.618 * diff,
+        "0.786": hh - 0.786 * diff,
+    }
+    # Fiyat hangi seviyeye en yakin
+    closest = min(levels, key=lambda k: abs(levels[k] - price))
+    pct_pos = (price - ll) / diff  # 0=dip, 1=tepe
+    if pct_pos < 0.382:
+        sig = "long"   # alt bolge - destek
+    elif pct_pos > 0.618:
+        sig = "short"  # ust bolge - direnc
+    else:
+        sig = "neutral"
+    return sig, closest
+
 def dot(s):
     return "🟢" if s=="long" else ("🔴" if s=="short" else "🟡")
 
@@ -166,6 +192,10 @@ def analyze(symbol, df, ticker):
 
     adx_v,pdi,mdi = calc_adx(high,low,close); av = adx_v.iloc[-1]
     add("ADX", f"{av:.0f}", "long" if av>25 and pdi.iloc[-1]>mdi.iloc[-1] else ("short" if av>25 and mdi.iloc[-1]>pdi.iloc[-1] else "neutral"))
+
+    # 11. Fibonacci
+    fib_sig, fib_lvl = calc_fibonacci(high, low, close)
+    add("Fib", f"Lvl:{fib_lvl}", fib_sig)
 
     try:
         # MEXC ticker alanlari: lastPrice, riseFallRate, volume24, amount24
