@@ -337,8 +337,27 @@ def build_messages(longs, shorts):
     ts = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
     hdr = f"🤖 *MEXC Futures Tarama* | {ts} UTC | TF: `{TIMEFRAME}`\n🟢 Long  🔴 Short  🟡 Notr\n"
     m1 = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long") for r in longs)
+    
+    # 2. Mesajın sonuna göstergelerin ayrıntılı açıklamalarını ekliyoruz
     m2 = "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
-    m2 += "\n_RSI · MACD · BB · EMA · Stoch · ATR · OBV · CCI · W%R · ADX_"
+    
+    m2 += (
+        "\n📖 *GÖSTERGE AÇIKLAMALARI REHBERİ*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "• *MACD:* Trend yönünü ve gücünü ölçer. Pozitif ve bir önceki mumdan yüksekse LONG, negatif ve düşükse SHORT teyididir.\n"
+        "• *BB% (Bollinger Bands):* Fiyatın kanalın neresinde olduğunu yüzdeyle ölçer. %0'a yakın veya altındaysa (destek) LONG, %100'e yakın veya üstündeyse (direnç) SHORT sinyalidir.\n"
+        "• *EMA20/50:* Kısa/orta vadeli trend. 20'lik ortalama 50'liğin üstündeyse ve fiyat da üstündeyse LONG, tersi durumda SHORT.\n"
+        "• *ATR%:* Piyasanın oynaklığını (volatilitesini) yüzdeyle gösterir. TP/SL seviyeleri bu oynaklığa göre otomatik belirlenir.\n"
+        "• *CCI(20):* Trend değişimlerini izler. -100'ün altı aşırı satımdır (LONG dönebilir), +100'ün üstü aşırı alımdır (SHORT dönebilir).\n"
+        "• *W%R:* Stokastik benzeri hızlı osilatördür. -80'in altı aşırı dip (LONG), -20'nin üstü aşırı tepe (SHORT) bölgesidir.\n"
+        "• *Fib (Fibonacci):* Son 50 mumun tepe/dip noktasına göre destek ölçer. Fiyat alt bölgedeyse LONG destek teyidi, üst bölgedeyse SHORT direnç teyididir.\n"
+        "• *CMF (Chaikin Money Flow):* Balina/kurumsal para akışını ölçer. 0.05'ten büyükse para girişi (LONG), -0.05'ten küçükse para çıkışı (SHORT) vardır.\n"
+        "• *RSI(14):* Güç endeksidir. 30'un altı aşırı satım (LONG yaklaşıyor), 70'in üstü aşırı alım (SHORT yaklaşıyor) demektir.\n"
+        "• *Supertrend:* ATR tabanlı trend takipçisidir. 'Buy' verirse yükseliş trendi (LONG), 'Sell' verirse düşüş trendi (SHORT) baskındır.\n"
+        "• *Ichimoku:* Fiyatın ana buluta göre konumudur. Bulutun üstündeyse trend güçlüdür (LONG), altındaysa zayıftır (SHORT).\n"
+        "• *WaveTrend:* Gelişmiş hacim osilatörüdür. -60'ın altında kesişim yaparsa dip dönüşü (LONG), +60'ın üstünde kesişirse tepe dönüşüdür (SHORT).\n"
+        "• *Squeeze:* Patlama ve momentum durumudur. 'Squeezing' yakında sert kırılım geleceğini (sıkışma) bildirir. 'Mom Up' yukarı ivmeyi (LONG), 'Mom Dn' aşağı ivmeyi (SHORT) doğrular."
+    )
     return [m1, m2]
 
 async def run_scan():
