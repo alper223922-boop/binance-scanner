@@ -154,15 +154,6 @@ def calc_cmf(high, low, close, vol, period=20):
     mfv = ((close - low) - (high - close)) / (high - low + 1e-10) * vol
     return mfv.rolling(period).sum() / (vol.rolling(period).sum() + 1e-10)
 
-def calc_mfi(high, low, close, vol, period=14):
-    """Money Flow Index - hacim agirlikli RSI"""
-    tp = (high + low + close) / 3
-    mf = tp * vol
-    pos = mf.where(tp > tp.shift(1), 0)
-    neg = mf.where(tp < tp.shift(1), 0)
-    mfr = pos.rolling(period).sum() / (neg.rolling(period).sum() + 1e-10)
-    return 100 - (100 / (1 + mfr))
-
 def calc_supertrend(high, low, close, period=10, multiplier=3.0):
     """Supertrend - trend yonu"""
     atr = calc_atr(high, low, close, period)
@@ -209,7 +200,7 @@ def calc_squeeze(high, low, close, vol, bb_period=20, kc_period=20, kc_mult=1.5)
     return squeeze.iloc[-1], momentum.iloc[-1], momentum.iloc[-2]
 
 def calc_ichimoku(high, low, close):
-    """Ichimoku Bulutu - fiyat bulutun ustunde mi altinda mi"""
+    """Ichimoku Bulutu - fiyat bulutun ustunde mi altemi"""
     tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
     kijun  = (high.rolling(26).max() + low.rolling(26).min()) / 2
     senkou_a = ((tenkan + kijun) / 2).shift(26)
@@ -218,10 +209,10 @@ def calc_ichimoku(high, low, close):
     cloud_top = max(senkou_a.iloc[-1], senkou_b.iloc[-1])
     cloud_bot = min(senkou_a.iloc[-1], senkou_b.iloc[-1])
     if price > cloud_top:
-        return long, Above
+        return "long", "Above"
     elif price < cloud_bot:
-        return short, Below
-    return neutral, Inside
+        return "short", "Below"
+    return "neutral", "Inside"
 
 def dot(s):
     return "🟢" if s=="long" else ("🔴" if s=="short" else "🟡")
@@ -268,10 +259,10 @@ def analyze(symbol, df, ticker):
     sig = "long" if cmf_v > 0.05 else ("short" if cmf_v < -0.05 else "neutral")
     add("CMF", f"{cmf_v:.3f}", sig)
 
-    # 13. MFI
-    mfi_v = calc_mfi(high, low, close, vol).iloc[-1]
-    sig = "long" if mfi_v < 30 else ("short" if mfi_v > 70 else "neutral")
-    add("MFI(14)", f"{mfi_v:.0f}", sig)
+    # 13. RSI (MFI Yerine Eklendi)
+    rsi_v = calc_rsi(close).iloc[-1]
+    sig = "long" if rsi_v < 30 else ("short" if rsi_v > 70 else "neutral")
+    add("RSI(14)", f"{rsi_v:.0f}", sig)
 
     # 14. Supertrend
     st_dir = calc_supertrend(high, low, close)
