@@ -149,6 +149,80 @@ def calc_fibonacci(high, low, close, period=50):
         sig = "neutral"
     return sig, closest
 
+def calc_cmf(high, low, close, vol, period=20):
+    """Chaikin Money Flow - kurumsal para akisi"""
+    mfv = ((close - low) - (high - close)) / (high - low + 1e-10) * vol
+    return mfv.rolling(period).sum() / (vol.rolling(period).sum() + 1e-10)
+
+def calc_mfi(high, low, close, vol, period=14):
+    """Money Flow Index - hacim agirlikli RSI"""
+    tp = (high + low + close) / 3
+    mf = tp * vol
+    pos = mf.where(tp > tp.shift(1), 0)
+    neg = mf.where(tp < tp.shift(1), 0)
+    mfr = pos.rolling(period).sum() / (neg.rolling(period).sum() + 1e-10)
+    return 100 - (100 / (1 + mfr))
+
+def calc_supertrend(high, low, close, period=10, multiplier=3.0):
+    """Supertrend - trend yonu"""
+    atr = calc_atr(high, low, close, period)
+    hl2 = (high + low) / 2
+    upper = hl2 + multiplier * atr
+    lower = hl2 - multiplier * atr
+    supertrend = close.copy()
+    direction = pd.Series(1, index=close.index)
+    for i in range(1, len(close)):
+        if close.iloc[i] > upper.iloc[i-1]:
+            direction.iloc[i] = 1
+        elif close.iloc[i] < lower.iloc[i-1]:
+            direction.iloc[i] = -1
+        else:
+            direction.iloc[i] = direction.iloc[i-1]
+    return direction
+
+def calc_wavetrend(high, low, close, n1=10, n2=21):
+    """WaveTrend - asiri alim/satim dönüsleri"""
+    hlc3 = (high + low + close) / 3
+    esa = hlc3.ewm(span=n1, adjust=False).mean()
+    d = (hlc3 - esa).abs().ewm(span=n1, adjust=False).mean()
+    ci = (hlc3 - esa) / (0.015 * d + 1e-10)
+    wt1 = ci.ewm(span=n2, adjust=False).mean()
+    wt2 = wt1.rolling(4).mean()
+    return wt1, wt2
+
+def calc_squeeze(high, low, close, vol, bb_period=20, kc_period=20, kc_mult=1.5):
+    """Squeeze Momentum - patlama ani tespiti"""
+    # Bollinger Bands
+    bb_mid = close.rolling(bb_period).mean()
+    bb_std = close.rolling(bb_period).std()
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
+    # Keltner Channels
+    kc_atr = calc_atr(high, low, close, kc_period)
+    kc_upper = bb_mid + kc_mult * kc_atr
+    kc_lower = bb_mid - kc_mult * kc_atr
+    # Squeeze: BB icinde KC ise sikisma var
+    squeeze = (bb_upper < kc_upper) & (bb_lower > kc_lower)
+    # Momentum
+    delta = close - (high.rolling(kc_period).max() + low.rolling(kc_period).min()) / 2
+    momentum = delta.rolling(bb_period).mean()
+    return squeeze.iloc[-1], momentum.iloc[-1], momentum.iloc[-2]
+
+def calc_ichimoku(high, low, close):
+    """Ichimoku Bulutu - fiyat bulutun ustunde mi altinda mi"""
+    tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
+    kijun  = (high.rolling(26).max() + low.rolling(26).min()) / 2
+    senkou_a = ((tenkan + kijun) / 2).shift(26)
+    senkou_b = ((high.rolling(52).max() + low.rolling(52).min()) / 2).shift(26)
+    price = close.iloc[-1]
+    cloud_top = max(senkou_a.iloc[-1], senkou_b.iloc[-1])
+    cloud_bot = min(senkou_a.iloc[-1], senkou_b.iloc[-1])
+    if price > cloud_top:
+        return long, Above
+    elif price < cloud_bot:
+        return short, Below
+    return neutral, Inside
+
 def dot(s):
     return "🟢" if s=="long" else ("🔴" if s=="short" else "🟡")
 
@@ -197,12 +271,49 @@ def analyze(symbol, df, ticker):
     fib_sig, fib_lvl = calc_fibonacci(high, low, close)
     add("Fib", f"Lvl:{fib_lvl}", fib_sig)
 
+    # 12. CMF
+    cmf_v = calc_cmf(high, low, close, vol).iloc[-1]
+    sig = "long" if cmf_v > 0.05 else ("short" if cmf_v < -0.05 else "neutral")
+    add("CMF", f"{cmf_v:.3f}", sig)
+
+    # 13. MFI
+    mfi_v = calc_mfi(high, low, close, vol).iloc[-1]
+    sig = "long" if mfi_v < 30 else ("short" if mfi_v > 70 else "neutral")
+    add("MFI(14)", f"{mfi_v:.0f}", sig)
+
+    # 14. Supertrend
+    st_dir = calc_supertrend(high, low, close)
+    sig = "long" if st_dir.iloc[-1] == 1 else "short"
+    add("Supertrend", "Buy" if sig=="long" else "Sell", sig)
+
+    # 15. Ichimoku
+    ich_sig, ich_pos = calc_ichimoku(high, low, close)
+    add("Ichimoku", ich_pos, ich_sig)
+
+    # 16. WaveTrend
+    wt1, wt2 = calc_wavetrend(high, low, close)
+    wv = wt1.iloc[-1]; wp = wt1.iloc[-2]
+    sig = "long" if wv < -60 and wv > wt2.iloc[-1] else ("short" if wv > 60 and wv < wt2.iloc[-1] else "neutral")
+    add("WaveTrend", f"{wv:.0f}", sig)
+
+    # 17. Squeeze Momentum
+    sq_on, sq_mom, sq_prev = calc_squeeze(high, low, close, vol)
+    if sq_on:
+        sq_sig = "neutral"
+        sq_str = "Squeezing"
+    else:
+        sq_sig = "long" if sq_mom > 0 and sq_mom > sq_prev else ("short" if sq_mom < 0 and sq_mom < sq_prev else "neutral")
+        sq_str = "Mom Up" if sq_sig=="long" else ("Mom Dn" if sq_sig=="short" else "Idle")
+    add("Squeeze", sq_str, sq_sig)
+
     try:
-        # MEXC ticker alanlari: lastPrice, riseFallRate, volume24, amount24
-        pc  = float(ticker.get("riseFallRate", 0)) * 100  # zaten yuzde olarak geliyor
-        v24 = float(ticker.get("amount24", ticker.get("volume24", 0)))
+        pc   = float(ticker.get("riseFallRate", 0)) * 100
+        v24  = float(ticker.get("amount24", ticker.get("volume24", 0)))
+        v24h = float(ticker.get("volume24", 0))
+        v24h_prev = v24h / (1 + abs(pc) / 100 + 0.001)
+        vol_change = ((v24h - v24h_prev) / (v24h_prev + 1)) * 100
     except:
-        pc = 0; v24 = 0
+        pc = 0; v24 = 0; vol_change = 0
 
     return {
         "symbol": symbol.replace("_USDT",""), "price": price,
@@ -210,7 +321,7 @@ def analyze(symbol, df, ticker):
         "indicators": ind,
         "tp_long": price+2.5*atr_v, "sl_long": price-1.5*atr_v,
         "tp_short": price-2.5*atr_v, "sl_short": price+1.5*atr_v,
-        "price_change_24h": pc, "volume_24h": v24,
+        "price_change_24h": pc, "volume_24h": v24, "vol_change_24h": vol_change,
     }
 
 def fmt_vol(v):
