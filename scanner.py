@@ -228,8 +228,12 @@ def dot(s):
 
 def analyze(symbol, df, ticker):
     if df is None or len(df) < 60: return None
-    close,high,low,vol = df["close"],df["high"],df["low"],df["vol"]
-    price = close.iloc[-1]
+    try:
+        close,high,low,vol = df["close"],df["high"],df["low"],df["vol"]
+        price = close.iloc[-1]
+    except Exception as e:
+        log.debug(f"{symbol} df hatasi: {e}")
+        return None
     ind = {}; scores = []
 
     def add(name, val, sig):
@@ -365,7 +369,11 @@ async def run_scan():
             if result: results.append(result)
             time.sleep(1 if i % 50 == 0 and i > 0 else 0.05)
         except Exception as e:
-            failed += 1; log.debug(f"{sym}: {e}")
+            failed += 1
+            if failed <= 5:
+                log.error(f"{sym} HATA: {type(e).__name__}: {e}")
+            else:
+                log.debug(f"{sym}: {e}")
 
     log.info(f"Tamamlandi: {len(results)} gecerli, {failed} hata")
     if not results:
