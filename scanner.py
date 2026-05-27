@@ -259,7 +259,7 @@ def analyze(symbol, df, ticker):
     sig = "long" if cmf_v > 0.05 else ("short" if cmf_v < -0.05 else "neutral")
     add("CMF", f"{cmf_v:.3f}", sig)
 
-    # 13. RSI (MFI Yerine Eklendi)
+    # 13. RSI
     rsi_v = calc_rsi(close).iloc[-1]
     sig = "long" if rsi_v < 30 else ("short" if rsi_v > 70 else "neutral")
     add("RSI(14)", f"{rsi_v:.0f}", sig)
@@ -336,13 +336,16 @@ def fmt_block(r, direction):
 def build_messages(longs, shorts):
     ts = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
     hdr = f"🤖 *MEXC Futures Tarama* | {ts} UTC | TF: `{TIMEFRAME}`\n🟢 Long  🔴 Short  🟡 Notr\n"
+    
+    # 1. Mesaj: Sadece TOP LONG Sinyalleri
     m1 = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long") for r in longs)
     
-    # 2. Mesajın sonuna göstergelerin ayrıntılı açıklamalarını ekliyoruz
-    m2 = "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
+    # 2. Mesaj: Sadece TOP SHORT Sinyalleri (Karakter sınırına takılmaması için temizlendi)
+    m2 = hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
     
-    m2 += (
-        "\n📖 *GÖSTERGE AÇIKLAMALARI REHBERİ*\n"
+    # 3. Mesaj: Tamamen Ayrı Bir Gösterge Rehberi Mesajı
+    m3 = (
+        "📖 *GÖSTERGE AÇIKLAMALARI REHBERİ*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "• *MACD:* Trend yönünü ve gücünü ölçer. Pozitif ve bir önceki mumdan yüksekse LONG, negatif ve düşükse SHORT teyididir.\n"
         "• *BB% (Bollinger Bands):* Fiyatın kanalın neresinde olduğunu yüzdeyle ölçer. %0'a yakın veya altındaysa (destek) LONG, %100'e yakın veya üstündeyse (direnç) SHORT sinyalidir.\n"
@@ -358,7 +361,7 @@ def build_messages(longs, shorts):
         "• *WaveTrend:* Gelişmiş hacim osilatörüdür. -60'ın altında kesişim yaparsa dip dönüşü (LONG), +60'ın üstünde kesişirse tepe dönüşüdür (SHORT).\n"
         "• *Squeeze:* Patlama ve momentum durumudur. 'Squeezing' yakında sert kırılım geleceğini (sıkışma) bildirir. 'Mom Up' yukarı ivmeyi (LONG), 'Mom Dn' aşağı ivmeyi (SHORT) doğrular."
     )
-    return [m1, m2]
+    return [m1, m2, m3]
 
 async def run_scan():
     log.info("MEXC tarama basliyor...")
