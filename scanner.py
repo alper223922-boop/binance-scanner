@@ -236,9 +236,6 @@ def analyze(symbol, df, ticker):
         ind[name] = {"value": val, "signal": sig}
         scores.append(1 if sig=="long" else (-1 if sig=="short" else 0))
 
-    rsi = calc_rsi(close).iloc[-1]
-    add("RSI(14)", f"{rsi:.1f}", "long" if rsi<35 else ("short" if rsi>65 else "neutral"))
-
     h = calc_macd(close); hv,hp = h.iloc[-1],h.iloc[-2]
     add("MACD", f"{hv:.5f}", "long" if hv>0 and hv>hp else ("short" if hv<0 and hv<hp else "neutral"))
 
@@ -249,23 +246,14 @@ def analyze(symbol, df, ticker):
     e20,e50 = calc_ema(close,20).iloc[-1],calc_ema(close,50).iloc[-1]
     add("EMA20/50", f"{e20/e50:.4f}", "long" if e20>e50 and price>e20 else ("short" if e20<e50 and price<e20 else "neutral"))
 
-    sk,sd = calc_stoch(high,low,close); kv,dv = sk.iloc[-1],sd.iloc[-1]
-    add("Stoch", f"K:{kv:.0f} D:{dv:.0f}", "long" if kv<20 and kv>dv else ("short" if kv>80 and kv<dv else "neutral"))
-
     atr_v = calc_atr(high,low,close).iloc[-1]
     ind["ATR%"] = {"value": f"{atr_v/price*100:.2f}%", "signal": "neutral"}
-
-    obv = calc_obv(close,vol); oe = obv.ewm(span=20).mean()
-    add("OBV","up" if obv.iloc[-1]>oe.iloc[-1] else "dn","long" if obv.iloc[-1]>oe.iloc[-1] else ("short" if obv.iloc[-1]<oe.iloc[-1] else "neutral"))
 
     cci_v = calc_cci(high,low,close).iloc[-1]
     add("CCI(20)", f"{cci_v:.0f}", "long" if cci_v<-100 else ("short" if cci_v>100 else "neutral"))
 
     wr = calc_wr(high,low,close).iloc[-1]
     add("W%R", f"{wr:.0f}", "long" if wr<-80 else ("short" if wr>-20 else "neutral"))
-
-    adx_v,pdi,mdi = calc_adx(high,low,close); av = adx_v.iloc[-1]
-    add("ADX", f"{av:.0f}", "long" if av>25 and pdi.iloc[-1]>mdi.iloc[-1] else ("short" if av>25 and mdi.iloc[-1]>pdi.iloc[-1] else "neutral"))
 
     # 11. Fibonacci
     fib_sig, fib_lvl = calc_fibonacci(high, low, close)
