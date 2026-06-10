@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "YOUR_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
+TELEGRAM_TOKEN   = os.getenv("8706031816:AAGC3s6g-wgju6R9guPahq5wI9qVxYjFtf4", "YOUR_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("1385442139", "YOUR_CHAT_ID")
 TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")  # Istenebilir: Min15, Min60, Hour4
 TOP_RESULTS      = 10
 MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
