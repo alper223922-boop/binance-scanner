@@ -2,7 +2,7 @@ name: Futures Scanner 4H
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '*/60 * * * *'
   workflow_dispatch:
 
 jobs:
