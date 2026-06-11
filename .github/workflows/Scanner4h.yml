@@ -1,0 +1,29 @@
+name: Futures Scanner 4H
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Bagimliliklar
+        run: pip install -r requirements.txt
+
+      - name: Scanner 4H calistir
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_4H }}
+          TIMEFRAME: "Hour4"
+          MIN_VOLUME_USDT: "5000000"
+          PYTHONIOENCODING: "utf-8"
+        run: python scanner.py
