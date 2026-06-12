@@ -1,17 +1,15 @@
 """
 Futures Scanner - MEXC API - Top 10 Long/Short Sinyali
-Zaman dilimine gore otomatik parametre ayari
-GitHub Actions ile calisir
+Asenkron (Parallel) Veri Toplama Yapisi - GitHub Actions Kesin Cozum
 """
 
 import asyncio
 import os
 import sys
-import time
-import logging
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import aiohttp
 import requests
 from telegram import Bot
 from telegram.constants import ParseMode
@@ -25,7 +23,6 @@ TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
 TOP_RESULTS      = 10
 MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
 
-# GitHub sunucularında en kararlı çalışan resmi global API adresi
 MEXC_BASE = "https://contract.mexc-api.com"
 HEADERS   = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
@@ -59,18 +56,6 @@ TF_PARAMS = {
 def get_tf_params():
     return TF_PARAMS.get(TIMEFRAME, TF_PARAMS["Min60"])
 
-# Şişmeyi önlemek için log seviyesi en kısıtlı seviyede tutuluyor
-log_formatter  = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-file_handler   = logging.FileHandler("scanner.log", encoding="utf-8")
-file_handler.setFormatter(log_formatter)
-if sys.platform == "win32":
-    try: sys.stdout.reconfigure(encoding="utf-8")
-    except: pass
-stream_handler = logging.StreamHandler(sys.stdout)
-stream_handler.setFormatter(log_formatter)
-logging.basicConfig(level=logging.CRITICAL, handlers=[file_handler, stream_handler])
-log = logging.getLogger(__name__)
-
 def get_symbols():
     try:
         r = requests.get(f"{MEXC_BASE}/api/v1/contract/detail", headers=HEADERS, timeout=10)
@@ -80,41 +65,33 @@ def get_symbols():
     except:
         return []
 
-def get_klines(symbol, interval="Min60", limit=200):
+# Hızlı asenkron veri çekme fonksiyonları
+async def fetch_klines(session, symbol, interval, limit=80):
     url = f"{MEXC_BASE}/api/v1/contract/kline/{symbol}"
-    # Hour4 periyodunda sunucunun şişmesini önlemek için limiti kod seviyesinde daraltıyoruz
-    req_limit = 80 if interval == "Hour4" else limit
-    
     try:
-        r = requests.get(url, headers=HEADERS, params={"interval": interval, "limit": req_limit}, timeout=12)
-        if r.status_code != 200: return None
-        raw = r.json().get("data", {})
-        if not raw or "close" not in raw: return None
-        
-        # Hafıza dostu DataFrame oluşturma: Sadece gerekli son mumları doğrudan kesip alıyoruz
-        df = pd.DataFrame({
-            "open":  raw["open"],
-            "close": raw["close"],
-            "high":  raw["high"],
-            "low":   raw["low"],
-            "vol":   raw["vol"],
-        })
-        
-        if len(df) > req_limit:
-            df = df.iloc[-req_limit:].reset_index(drop=True)
+        async with session.get(url, params={"interval": interval, "limit": limit}, timeout=8) as r:
+            if r.status != 200: return None
+            res = await r.json()
+            raw = res.get("data", {})
+            if not raw or "close" not in raw: return None
             
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            
-        return df.dropna()
+            df = pd.DataFrame({
+                "open":  raw["open"], "close": raw["close"],
+                "high":  raw["high"], "low":   raw["low"], "vol":   raw["vol"]
+            })
+            if len(df) > limit: df = df.iloc[-limit:].reset_index(drop=True)
+            for col in df.columns: df[col] = pd.to_numeric(df[col], errors="coerce")
+            return df.dropna()
     except:
         return None
 
-def get_ticker(symbol):
+async def fetch_ticker(session, symbol):
+    url = f"{MEXC_BASE}/api/v1/contract/ticker"
     try:
-        r = requests.get(f"{MEXC_BASE}/api/v1/contract/ticker?symbol={symbol}", headers=HEADERS, timeout=5)
-        if r.status_code != 200: return None
-        return r.json().get("data", None)
+        async with session.get(url, params={"symbol": symbol}, timeout=5) as r:
+            if r.status != 200: return None
+            res = await r.json()
+            return res.get("data", None)
     except:
         return None
 
@@ -155,14 +132,10 @@ def calc_fibonacci(high, low, close, period=50):
     ll = low.rolling(period).min().iloc[-1]
     price = close.iloc[-1]
     diff = hh - ll
-    if diff == 0:
-        return "neutral", "0.5"
+    if diff == 0: return "neutral", "0.5"
     levels = {
-        "0.236": hh - 0.236 * diff,
-        "0.382": hh - 0.382 * diff,
-        "0.500": hh - 0.500 * diff,
-        "0.618": hh - 0.618 * diff,
-        "0.786": hh - 0.786 * diff,
+        "0.236": hh - 0.236 * diff, "0.382": hh - 0.382 * diff,
+        "0.500": hh - 0.500 * diff, "0.618": hh - 0.618 * diff, "0.786": hh - 0.786 * diff
     }
     closest = min(levels, key=lambda k: abs(levels[k] - price))
     pct_pos = (price - ll) / diff
@@ -180,12 +153,9 @@ def calc_supertrend(high, low, close, period=10, multiplier=3.0):
     lower = hl2 - multiplier * atr
     direction = pd.Series(1, index=close.index)
     for i in range(1, len(close)):
-        if close.iloc[i] > upper.iloc[i-1]:
-            direction.iloc[i] = 1
-        elif close.iloc[i] < lower.iloc[i-1]:
-            direction.iloc[i] = -1
-        else:
-            direction.iloc[i] = direction.iloc[i-1]
+        if close.iloc[i] > upper.iloc[i-1]: direction.iloc[i] = 1
+        elif close.iloc[i] < lower.iloc[i-1]: direction.iloc[i] = -1
+        else: direction.iloc[i] = direction.iloc[i-1]
     return direction
 
 def calc_wavetrend(high, low, close, n1=10, n2=21):
@@ -218,8 +188,8 @@ def calc_ichimoku(high, low, close):
     price    = close.iloc[-1]
     cloud_top = max(senkou_a.iloc[-1], senkou_b.iloc[-1])
     cloud_bot = min(senkou_a.iloc[-1], senkou_b.iloc[-1])
-    if price > cloud_top:   return "long",    "Above"
-    elif price < cloud_bot: return "short",   "Below"
+    if price > cloud_top: return "long", "Above"
+    elif price < cloud_bot: return "short", "Below"
     return "neutral", "Inside"
 
 def dot(s):
@@ -227,25 +197,23 @@ def dot(s):
 
 def analyze(symbol, df, ticker):
     p = get_tf_params()
-    if df is None or len(df) < p["min_candles"]:
-        return None
+    if df is None or len(df) < p["min_candles"]: return None
     try:
-        close,high,low,vol = df["close"],df["high"],df["low"],df["vol"]
+        close, high, low, vol = df["close"], df["high"], df["low"], df["vol"]
         price = close.iloc[-1]
     except:
         return None
 
     ind = {}; scores = []
-
     def add(name, val, sig):
         ind[name] = {"value": val, "signal": sig}
         scores.append(1 if sig=="long" else (-1 if sig=="short" else 0))
 
     h = calc_macd(close, p["macd_fast"], p["macd_slow"], p["macd_sig"])
-    hv,hp = h.iloc[-1],h.iloc[-2]
+    hv, hp = h.iloc[-1], h.iloc[-2]
     add("MACD", f"{hv:.5f}", "long" if hv>0 and hv>hp else ("short" if hv<0 and hv<hp else "neutral"))
 
-    bbu,bbl = calc_bb(close, p["bb_p"])
+    bbu, bbl = calc_bb(close, p["bb_p"])
     bb_pct = (price-bbl.iloc[-1])/(bbu.iloc[-1]-bbl.iloc[-1]+1e-10)*100
     add("BB%", f"{bb_pct:.1f}%", "long" if price<bbl.iloc[-1] else ("short" if price>bbu.iloc[-1] else "neutral"))
 
@@ -358,26 +326,25 @@ def build_messages(longs, shorts):
     )
     return [m1, m2, m3]
 
+async def process_symbol(session, sym):
+    # Her sembolü kendi içinde eşzamanlı çeker ve analiz eder
+    df = await fetch_klines(session, sym, TIMEFRAME, 80)
+    if df is None: return None
+    ticker = await fetch_ticker(session, sym)
+    if ticker is None: return None
+    if float(ticker.get("amount24", 0)) < MIN_VOLUME_USDT: return None
+    return analyze(sym, df, ticker)
+
 async def run_scan():
     symbols = get_symbols()
     if not symbols: return
 
-    results = []
-    for i, sym in enumerate(symbols):
-        try:
-            df     = get_klines(sym, TIMEFRAME, 200)
-            ticker = get_ticker(sym)
-            if ticker is None or df is None: continue
-            if float(ticker.get("amount24", 0)) < MIN_VOLUME_USDT: continue
-            
-            result = analyze(sym, df, ticker)
-            if result: results.append(result)
-            
-            # Belleği korumak ve sunucuyu yormamak için her döngüde kısa bekleme
-            await asyncio.sleep(0.05)
-        except:
-            pass
-
+    # Tüm pariteleri aiohttp ile tek seferde, paralel olarak tarıyoruz
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        tasks = [process_symbol(session, sym) for sym in symbols]
+        raw_results = await asyncio.gather(*tasks)
+    
+    results = [r for r in raw_results if r is not None]
     if not results: return
 
     top_longs  = sorted(results, key=lambda x: x["score"], reverse=True)[:TOP_RESULTS]
@@ -386,10 +353,10 @@ async def run_scan():
     if "YOUR_TOKEN" in TELEGRAM_TOKEN: return
 
     bot = Bot(token=TELEGRAM_TOKEN)
-    for i, msg in enumerate(build_messages(top_longs, top_shorts)):
+    for msg in build_messages(top_longs, top_shorts):
         try:
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
         except:
             try:
                 plain = msg.replace("*","").replace("`","").replace("_","")
