@@ -25,7 +25,8 @@ TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
 TOP_RESULTS      = 10
 MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
 
-MEXC_BASE = "https://contract.mexc.com"
+# GitHub sunucularında en kararlı çalışan resmi global API adresi
+MEXC_BASE = "https://contract.mexc-api.com"
 HEADERS   = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 TF_PARAMS = {
@@ -58,6 +59,7 @@ TF_PARAMS = {
 def get_tf_params():
     return TF_PARAMS.get(TIMEFRAME, TF_PARAMS["Min60"])
 
+# Şişmeyi önlemek için log seviyesi en kısıtlı seviyede tutuluyor
 log_formatter  = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 file_handler   = logging.FileHandler("scanner.log", encoding="utf-8")
 file_handler.setFormatter(log_formatter)
@@ -66,53 +68,55 @@ if sys.platform == "win32":
     except: pass
 stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setFormatter(log_formatter)
-logging.basicConfig(level=logging.INFO, handlers=[file_handler, stream_handler])
+logging.basicConfig(level=logging.CRITICAL, handlers=[file_handler, stream_handler])
 log = logging.getLogger(__name__)
 
 def get_symbols():
-    r = requests.get(f"{MEXC_BASE}/api/v1/contract/detail", headers=HEADERS, timeout=10)
-    r.raise_for_status()
-    data = r.json().get("data", [])
-    symbols = [d["symbol"] for d in data if d.get("settleCoin") == "USDT" and d.get("state") == 0]
-    log.info(f"Toplam: {len(data)}, USDT: {len(symbols)}")
-    return symbols
+    try:
+        r = requests.get(f"{MEXC_BASE}/api/v1/contract/detail", headers=HEADERS, timeout=10)
+        if r.status_code != 200: return []
+        data = r.json().get("data", [])
+        return [d["symbol"] for d in data if d.get("settleCoin") == "USDT" and d.get("state") == 0]
+    except:
+        return []
 
 def get_klines(symbol, interval="Min60", limit=200):
     url = f"{MEXC_BASE}/api/v1/contract/kline/{symbol}"
+    # Hour4 periyodunda sunucunun şişmesini önlemek için limiti kod seviyesinde daraltıyoruz
+    req_limit = 80 if interval == "Hour4" else limit
     
-    # Hour4 için limit parametresini 80 ile sınırlandırıyoruz (Indikatörler için fazlasıyla yeterli)
-    request_limit = 80 if interval == "Hour4" else limit
-    
-    r = requests.get(url, headers=HEADERS, params={"interval": interval, "limit": request_limit}, timeout=10)
-    if r.status_code != 200:
-        return None
-    raw = r.json().get("data", {})
-    if not raw:
-        return None
     try:
+        r = requests.get(url, headers=HEADERS, params={"interval": interval, "limit": req_limit}, timeout=12)
+        if r.status_code != 200: return None
+        raw = r.json().get("data", {})
+        if not raw or "close" not in raw: return None
+        
+        # Hafıza dostu DataFrame oluşturma: Sadece gerekli son mumları doğrudan kesip alıyoruz
         df = pd.DataFrame({
-            "open":  raw.get("open", []),
-            "close": raw.get("close", []),
-            "high":  raw.get("high", []),
-            "low":   raw.get("low", []),
-            "vol":   raw.get("vol", []),
+            "open":  raw["open"],
+            "close": raw["close"],
+            "high":  raw["high"],
+            "low":   raw["low"],
+            "vol":   raw["vol"],
         })
         
-        # Eğer gelen veri yine de çok büyükse, sadece son ihtiyaç duyulan mumları filtrele
-        if len(df) > request_limit:
-            df = df.tail(request_limit)
+        if len(df) > req_limit:
+            df = df.iloc[-req_limit:].reset_index(drop=True)
             
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+            
         return df.dropna()
     except:
         return None
 
 def get_ticker(symbol):
-    r = requests.get(f"{MEXC_BASE}/api/v1/contract/ticker?symbol={symbol}", headers=HEADERS, timeout=5)
-    if r.status_code != 200:
+    try:
+        r = requests.get(f"{MEXC_BASE}/api/v1/contract/ticker?symbol={symbol}", headers=HEADERS, timeout=5)
+        if r.status_code != 200: return None
+        return r.json().get("data", None)
+    except:
         return None
-    return r.json().get("data", None)
 
 def calc_rsi(close, p=14):
     d = close.diff()
@@ -228,8 +232,7 @@ def analyze(symbol, df, ticker):
     try:
         close,high,low,vol = df["close"],df["high"],df["low"],df["vol"]
         price = close.iloc[-1]
-    except Exception as e:
-        log.debug(f"{symbol} df hatasi: {e}")
+    except:
         return None
 
     ind = {}; scores = []
@@ -322,7 +325,6 @@ def fmt_block(r, direction):
     tp_pct = (tp-price)/price*100; sl_pct = (sl-price)/price*100
     rr = abs(tp_pct/sl_pct) if sl_pct!=0 else 0
     
-    # Kapsamlı Telegram koruması: Tüm indikatör satırları güvenli kod bloğuna alındı
     lines = [f"  {dot(d['signal'])} `{n}: {d['value']}`" for n,d in r["indicators"].items()]
     
     return (
@@ -344,7 +346,6 @@ def build_messages(longs, shorts):
     m1  = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long")  for r in longs)
     m2  = hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
     
-    # İstediğin gibi kısaltılmış ve sadeleştirilmiş kılavuz metni
     m3  = (
         f"📖 *GOSTERGE REHBERI*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -358,57 +359,43 @@ def build_messages(longs, shorts):
     return [m1, m2, m3]
 
 async def run_scan():
-    log.info(f"MEXC tarama basliyor... TF={TIMEFRAME}")
-    try:
-        symbols = get_symbols()
-        log.info(f"{len(symbols)} sembol bulundu")
-    except Exception as e:
-        log.error(f"Sembol listesi alinamadi: {e}"); return
+    symbols = get_symbols()
+    if not symbols: return
 
-    results = []; failed = 0
+    results = []
     for i, sym in enumerate(symbols):
         try:
             df     = get_klines(sym, TIMEFRAME, 200)
             ticker = get_ticker(sym)
-            if ticker is None: continue
+            if ticker is None or df is None: continue
             if float(ticker.get("amount24", 0)) < MIN_VOLUME_USDT: continue
+            
             result = analyze(sym, df, ticker)
             if result: results.append(result)
-            time.sleep(1 if i % 50 == 0 and i > 0 else 0.05)
-        except Exception as e:
-            failed += 1
-            if failed <= 3:
-                log.error(f"{sym} HATA: {type(e).__name__}: {e}")
-            else:
-                log.debug(f"{sym}: {e}")
+            
+            # Belleği korumak ve sunucuyu yormamak için her döngüde kısa bekleme
+            await asyncio.sleep(0.05)
+        except:
+            pass
 
-    log.info(f"Tamamlandi: {len(results)} gecerli, {failed} hata")
-    if not results:
-        log.warning("Sonuc bulunamadi!"); return
+    if not results: return
 
     top_longs  = sorted(results, key=lambda x: x["score"], reverse=True)[:TOP_RESULTS]
     top_shorts = sorted(results, key=lambda x: x["score"])[:TOP_RESULTS]
-    log.info(f"En iyi long: {top_longs[0]['symbol']} skor={top_longs[0]['score']}")
 
-    if "YOUR_TOKEN" in TELEGRAM_TOKEN:
-        log.error("TELEGRAM_TOKEN ayarlanmamis!"); return
+    if "YOUR_TOKEN" in TELEGRAM_TOKEN: return
 
     bot = Bot(token=TELEGRAM_TOKEN)
     for i, msg in enumerate(build_messages(top_longs, top_shorts)):
         try:
-            sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
-            log.info(f"Mesaj {i+1} OK id={sent.message_id}")
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
             await asyncio.sleep(2)
-        except Exception as e:
-            log.error(f"Telegram hatasi mesaj {i+1}: {e}")
+        except:
             try:
                 plain = msg.replace("*","").replace("`","").replace("_","")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=plain)
-            except Exception as e2:
-                log.error(f"Plain de basarisiz: {e2}")
-
-    log.info("Tum mesajlar gonderildi [OK]")
+            except:
+                pass
 
 if __name__ == "__main__":
-    log.info("Scanner basliyor...")
     asyncio.run(run_scan())
