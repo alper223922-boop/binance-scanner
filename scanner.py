@@ -79,7 +79,11 @@ def get_symbols():
 
 def get_klines(symbol, interval="Min60", limit=200):
     url = f"{MEXC_BASE}/api/v1/contract/kline/{symbol}"
-    r = requests.get(url, headers=HEADERS, params={"interval": interval, "limit": limit}, timeout=10)
+    
+    # Hour4 için limit parametresini 80 ile sınırlandırıyoruz (Indikatörler için fazlasıyla yeterli)
+    request_limit = 80 if interval == "Hour4" else limit
+    
+    r = requests.get(url, headers=HEADERS, params={"interval": interval, "limit": request_limit}, timeout=10)
     if r.status_code != 200:
         return None
     raw = r.json().get("data", {})
@@ -93,6 +97,11 @@ def get_klines(symbol, interval="Min60", limit=200):
             "low":   raw.get("low", []),
             "vol":   raw.get("vol", []),
         })
+        
+        # Eğer gelen veri yine de çok büyükse, sadece son ihtiyaç duyulan mumları filtrele
+        if len(df) > request_limit:
+            df = df.tail(request_limit)
+            
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         return df.dropna()
