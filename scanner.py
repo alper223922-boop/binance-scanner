@@ -312,39 +312,41 @@ def fmt_block(r, direction):
         tp,sl,cnt,arrow = r["tp_short"],r["sl_short"],r["short_count"],"🔻 SHORT"
     tp_pct = (tp-price)/price*100; sl_pct = (sl-price)/price*100
     rr = abs(tp_pct/sl_pct) if sl_pct!=0 else 0
-    
-    # Kapsamlı Telegram koruması: Tüm indikatör satırları güvenli kod bloğuna alındı
-    lines = [f"  {dot(d['signal'])} `{n}: {d['value']}`" for n,d in r["indicators"].items()]
-    
+    lines = [f"  {dot(d['signal'])} {n}: {d['value']}" for n,d in r["indicators"].items()]
     return (
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"*{r['symbol']}* {arrow} {'🔥'*min(cnt,5)}\n"
-        f"💵 Fiyat: `{price:.4f}` | 24h: {pc:+.2f}%\n"
-        f"💹 Hacim: `{fmt_vol(r['volume_24h'])}` | {vc:+.1f}%\n"
-        f"🎯 TP: `{tp:.4f}` ({tp_pct:+.2f}%)\n"
-        f"🛑 SL: `{sl:.4f}` ({sl_pct:+.2f}%)\n"
-        f"⚖️ R/R: `1:{rr:.1f}`\n"
+        f"💵 `${price:.4f}` | 24h: {'📈' if pc>=0 else '📉'} {pc:+.2f}%\n"
+        f"💹 Vol: {fmt_vol(r['volume_24h'])} | {'📈' if vc>=0 else '📉'} {vc:+.1f}%\n"
+        f"🎯 TP: `${tp:.4f}` ({tp_pct:+.2f}%)\n"
+        f"🛑 SL: `${sl:.4f}` ({sl_pct:+.2f}%)\n"
+        f"⚖️ R/R: 1:{rr:.1f}\n"
         f"📈 *Gostergeler*\n" + "\n".join(lines) + "\n"
     )
 
 def build_messages(longs, shorts):
     p   = get_tf_params()
     ts  = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
-    
     hdr = f"🤖 *MEXC Futures* | {ts} UTC | TF: `{TIMEFRAME}`\n🟢 Long  🔴 Short  🟡 Notr\n"
     m1  = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long")  for r in longs)
     m2  = hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
-    
-    # İstediğin gibi kısaltılmış ve sadeleştirilmiş kılavuz metni
     m3  = (
-        f"📖 *GOSTERGE REHBERI*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"TF: `{TIMEFRAME}` | RSI: `{p['rsi_p']}` | BB: `{p['bb_p']}` | EMA: `{p['ema_fast']}/{p['ema_slow']}`\n\n"
-        f"• MACD: Yon ve Trend Gucu\n"
-        f"• BB% / RSI / W%R / CCI: Tepe ve Dip Seviyeleri\n"
-        f"• EMA / Supertrend / Ichimoku: Trend Yonu\n"
-        f"• CMF: Para Giris/Cikis Durumu\n"
-        f"• WaveTrend / Squeeze: Donus ve Patlama Sinyali"
+        "📖 *GOSTERGE REHBERI*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"_TF={TIMEFRAME} | RSI={p['rsi_p']} | BB={p['bb_p']} | EMA={p['ema_fast']}/{p['ema_slow']}_\n\n"
+        "MACD: Momentum yonu/gucu\n"
+        "BB%: Bollinger pozisyonu\n"
+        f"EMA{p['ema_fast']}/{p['ema_slow']}: Trend kesisimi\n"
+        "ATR%: Volatilite (TP/SL icin)\n"
+        "CCI: Trend donusu (-100/+100)\n"
+        "W%R: Asiri dip/tepe bolgesi\n"
+        "Fib: Fibonacci destek/direnc\n"
+        "CMF: Kurumsal para akisi\n"
+        f"RSI({p['rsi_p']}): Asiri alim/satim\n"
+        "Supertrend: Trend yonu (Buy/Sell)\n"
+        "Ichimoku: Bulut ustu/alti/ici\n"
+        "WaveTrend: Erken donus sinyali\n"
+        "Squeeze: Patlama/momentum"
     )
     return [m1, m2, m3]
 
