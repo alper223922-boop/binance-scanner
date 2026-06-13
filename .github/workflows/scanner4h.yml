@@ -19,7 +19,7 @@ jobs:
       - name: Bagimliliklar
         run: pip install -r requirements.txt
 
-      - name: Scanner 4H calistir
+      - name: scanner 4H calistir
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID_4H }}
