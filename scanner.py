@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "8402488879:AAHbmCBU2JJS0fsKZyH6xY0SERzkWG-wqWM")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "=1385442139")
+TELEGRAM_TOKEN   = os.getenv("8402488879:AAHbmCBU2JJS0fsKZyH6xY0SERzkWG-wqWM", "")
+TELEGRAM_CHAT_ID = os.getenv("=1385442139", "")
 TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
 TOP_RESULTS      = 10
 MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
@@ -328,8 +328,22 @@ def build_messages(longs, shorts):
     p   = get_tf_params()
     ts  = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
     hdr = f"🤖 *MEXC Futures* | {ts} UTC | TF: `{TIMEFRAME}`\n🟢 Long  🔴 Short  🟡 Notr\n"
-    m1  = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long")  for r in longs)
-    m2  = hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
+    
+    messages = []
+    
+    # LONG mesajlarını 5'erli paketler halinde böl
+    for i in range(0, len(longs), 5):
+        chunk = longs[i:i+5]
+        part_hdr = hdr + f"\n🚀━━━━━ TOP 10 LONG (Part {i//5 + 1}) ━━━━━🚀\n"
+        messages.append(part_hdr + "\n".join(fmt_block(r, "long") for r in chunk))
+        
+    # SHORT mesajlarını 5'erli paketler halinde böl
+    for i in range(0, len(shorts), 5):
+        chunk = shorts[i:i+5]
+        part_hdr = hdr + f"\n🔻━━━━━ TOP 10 SHORT (Part {i//5 + 1}) ━━━━━🔻\n"
+        messages.append(part_hdr + "\n".join(fmt_block(r, "short") for r in chunk))
+        
+    # Rehber Mesajı
     m3  = (
         "📖 *GOSTERGE REHBERI*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -348,7 +362,8 @@ def build_messages(longs, shorts):
         "WaveTrend: Erken donus sinyali\n"
         "Squeeze: Patlama/momentum"
     )
-    return [m1, m2, m3]
+    messages.append(m3)
+    return messages
 
 async def run_scan():
     log.info(f"MEXC tarama basliyor... TF={TIMEFRAME}")
@@ -383,7 +398,7 @@ async def run_scan():
     top_shorts = sorted(results, key=lambda x: x["score"])[:TOP_RESULTS]
     log.info(f"En iyi long: {top_longs[0]['symbol']} skor={top_longs[0]['score']}")
 
-    if "YOUR_TOKEN" in TELEGRAM_TOKEN:
+    if "YOUR_TOKEN" in TELEGRAM_TOKEN or not TELEGRAM_TOKEN:
         log.error("TELEGRAM_TOKEN ayarlanmamis!"); return
 
     bot = Bot(token=TELEGRAM_TOKEN)
@@ -393,10 +408,12 @@ async def run_scan():
             log.info(f"Mesaj {i+1} OK id={sent.message_id}")
             await asyncio.sleep(2)
         except Exception as e:
-            log.error(f"Telegram hatasi mesaj {i+1}: {e}")
+            log.error(f"Telegram hatasi mesaj {i+1} (Markdown denemesi): {e}")
             try:
+                # Markdown hatası ihtimaline karşı yedek plain text gönderimi
                 plain = msg.replace("*","").replace("`","").replace("_","")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=plain)
+                log.info(f"Mesaj {i+1} Plain olarak gonderildi.")
             except Exception as e2:
                 log.error(f"Plain de basarisiz: {e2}")
 
