@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_TOKEN   = os.getenv("8402488879:AAHbmCBU2JJS0fsKZyH6xY0SERzkWG-wqWM", "")
-TELEGRAM_CHAT_ID = os.getenv("=1385442139", "")
+TELEGRAM_CHAT_ID = os.getenv("=1385442139", "=")
 TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
 TOP_RESULTS      = 10
 MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
@@ -313,43 +313,27 @@ def fmt_block(r, direction):
     tp_pct = (tp-price)/price*100; sl_pct = (sl-price)/price*100
     rr = abs(tp_pct/sl_pct) if sl_pct!=0 else 0
     lines = [f"  {dot(d['signal'])} {n}: {d['value']}" for n,d in r["indicators"].items()]
-    
-    # HTML FORMATI
     return (
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>{r['symbol']}</b> {arrow} {'🔥'*min(cnt,5)}\n"
-        f"💵 <code>${price:.4f}</code> | 24h: {'📈' if pc>=0 else '📉'} {pc:+.2f}%\n"
+        f"*{r['symbol']}* {arrow} {'🔥'*min(cnt,5)}\n"
+        f"💵 `${price:.4f}` | 24h: {'📈' if pc>=0 else '📉'} {pc:+.2f}%\n"
         f"💹 Vol: {fmt_vol(r['volume_24h'])} | {'📈' if vc>=0 else '📉'} {vc:+.1f}%\n"
-        f"🎯 TP: <code>${tp:.4f}</code> ({tp_pct:+.2f}%)\n"
-        f"🛑 SL: <code>${sl:.4f}</code> ({sl_pct:+.2f}%)\n"
+        f"🎯 TP: `${tp:.4f}` ({tp_pct:+.2f}%)\n"
+        f"🛑 SL: `${sl:.4f}` ({sl_pct:+.2f}%)\n"
         f"⚖️ R/R: 1:{rr:.1f}\n"
-        f"📈 <b>Gostergeler</b>\n" + "\n".join(lines) + "\n"
+        f"📈 *Gostergeler*\n" + "\n".join(lines) + "\n"
     )
 
 def build_messages(longs, shorts):
     p   = get_tf_params()
     ts  = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
-    hdr = f"🤖 <b>MEXC Futures</b> | {ts} UTC | TF: <code>{TIMEFRAME}</code>\n🟢 Long  🔴 Short  🟡 Notr\n"
-    
-    messages = []
-    
-    # LONG mesajlarını 5'erli paketler halinde böl (HTML)
-    for i in range(0, len(longs), 5):
-        chunk = longs[i:i+5]
-        part_hdr = hdr + f"\n🚀━━━━━ TOP 10 LONG (Part {i//5 + 1}) ━━━━━🚀\n"
-        messages.append(part_hdr + "\n".join(fmt_block(r, "long") for r in chunk))
-        
-    # SHORT mesajlarını 5'erli paketler halinde böl (HTML)
-    for i in range(0, len(shorts), 5):
-        chunk = shorts[i:i+5]
-        part_hdr = hdr + f"\n🔻━━━━━ TOP 10 SHORT (Part {i//5 + 1}) ━━━━━🔻\n"
-        messages.append(part_hdr + "\n".join(fmt_block(r, "short") for r in chunk))
-        
-    # Rehber Mesajı (HTML)
+    hdr = f"🤖 *MEXC Futures* | {ts} UTC | TF: `{TIMEFRAME}`\n🟢 Long  🔴 Short  🟡 Notr\n"
+    m1  = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long")  for r in longs)
+    m2  = hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
     m3  = (
-        "<b>📖 GOSTERGE REHBERI</b>\n"
+        "📖 *GOSTERGE REHBERI*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>TF={TIMEFRAME} | RSI={p['rsi_p']} | BB={p['bb_p']} | EMA={p['ema_fast']}/{p['ema_slow']}</i>\n\n"
+        f"_TF={TIMEFRAME} | RSI={p['rsi_p']} | BB={p['bb_p']} | EMA={p['ema_fast']}/{p['ema_slow']}_\n\n"
         "MACD: Momentum yonu/gucu\n"
         "BB%: Bollinger pozisyonu\n"
         f"EMA{p['ema_fast']}/{p['ema_slow']}: Trend kesisimi\n"
@@ -364,8 +348,7 @@ def build_messages(longs, shorts):
         "WaveTrend: Erken donus sinyali\n"
         "Squeeze: Patlama/momentum"
     )
-    messages.append(m3)
-    return messages
+    return [m1, m2, m3]
 
 async def run_scan():
     log.info(f"MEXC tarama basliyor... TF={TIMEFRAME}")
@@ -398,29 +381,24 @@ async def run_scan():
 
     top_longs  = sorted(results, key=lambda x: x["score"], reverse=True)[:TOP_RESULTS]
     top_shorts = sorted(results, key=lambda x: x["score"])[:TOP_RESULTS]
-    
-    if not top_longs or not top_shorts:
-        log.warning("Long veya Short listesi bos, filtrelere takilmis olabilir."); return
+    log.info(f"En iyi long: {top_longs[0]['symbol']} skor={top_longs[0]['score']}")
 
-    if "YOUR_TOKEN" in TELEGRAM_TOKEN or not TELEGRAM_TOKEN:
+    if "YOUR_TOKEN" in TELEGRAM_TOKEN:
         log.error("TELEGRAM_TOKEN ayarlanmamis!"); return
 
     bot = Bot(token=TELEGRAM_TOKEN)
     for i, msg in enumerate(build_messages(top_longs, top_shorts)):
         try:
-            # PARSE_MODE ARTIK HTML! ASLA FORMAT HATASI VERMEZ.
-            sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.HTML)
+            sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
             log.info(f"Mesaj {i+1} OK id={sent.message_id}")
             await asyncio.sleep(2)
         except Exception as e:
-            log.error(f"Telegram hatasi mesaj {i+1} (HTML denemesi): {e}")
+            log.error(f"Telegram hatasi mesaj {i+1}: {e}")
             try:
-                # HTML de patlarsa her şeyi temizleyip düz metin gönderir
-                plain = msg.replace("<b>","").replace("</b>","").replace("<code>","").replace("</code>","").replace("<i>","").replace("</i>","")
+                plain = msg.replace("*","").replace("`","").replace("_","")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=plain)
-                log.info(f"Mesaj {i+1} Duz metin olarak kurtarildi.")
             except Exception as e2:
-                log.error(f"Kritik Hata: Duz metin de gonderilemedi: {e2}")
+                log.error(f"Plain de basarisiz: {e2}")
 
     log.info("Tum mesajlar gonderildi [OK]")
 
