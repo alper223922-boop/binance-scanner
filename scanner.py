@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_TOKEN   = "8402488879:AAHbmCBU2JJS0fsKZyH6xY0SERzkWG-wqWM"
-TELEGRAM_CHAT_ID = "=1385442139"
+TELEGRAM_TOKEN   = os.getenv("8402488879:AAHbmCBU2JJS0fsKZyH6xY0SERzkWG-wqWM", "")
+TELEGRAM_CHAT_ID = os.getenv("=1385442139", "")
 TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
 TOP_RESULTS      = 10
 MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
@@ -289,26 +289,12 @@ def analyze(symbol, df, ticker):
     except:
         pc = 0; v24 = 0; vol_change = 0
 
-    # ÖNERİ B: Dinamik Yapısal Stop ve Kademeli TP Bölümü
-    bbu_last = bbu.iloc[-1]
-    bbl_last = bbl.iloc[-1]
-    
-    # Long Ayarları (SL: Bollinger Alt veya 1.5 ATR'den hangisi derindeyse)
-    sl_long = min(bbl_last, price - 1.5 * atr_v)
-    tp1_long = price + 1.2 * atr_v
-    tp2_long = price + 2.5 * atr_v
-    
-    # Short Ayarları (SL: Bollinger Üst veya 1.5 ATR'den hangisi derindeyse)
-    sl_short = max(bbu_last, price + 1.5 * atr_v)
-    tp1_short = price - 1.2 * atr_v
-    tp2_short = price - 2.5 * atr_v
-
     return {
         "symbol": symbol.replace("_USDT",""), "price": price,
         "score": sum(scores), "long_count": scores.count(1), "short_count": scores.count(-1),
         "indicators": ind,
-        "tp1_long": tp1_long, "tp2_long": tp2_long, "sl_long": sl_long,
-        "tp1_short": tp1_short, "tp2_short": tp2_short, "sl_short": sl_short,
+        "tp_long": price+2.5*atr_v, "sl_long": price-1.5*atr_v,
+        "tp_short": price-2.5*atr_v, "sl_short": price+1.5*atr_v,
         "price_change_24h": pc, "volume_24h": v24, "vol_change_24h": vol_change,
     }
 
@@ -320,28 +306,21 @@ def fmt_vol(v):
 
 def fmt_block(r, direction):
     price = r["price"]; pc = r["price_change_24h"]; vc = r.get("vol_change_24h", 0)
-    
     if direction=="long":
-        tp1, tp2, sl, cnt, arrow = r["tp1_long"], r["tp2_long"], r["sl_long"], r["long_count"], "🚀 LONG"
+        tp,sl,cnt,arrow = r["tp_long"],r["sl_long"],r["long_count"],"🚀 LONG"
     else:
-        tp1, tp2, sl, cnt, arrow = r["tp1_short"], r["tp2_short"], r["sl_short"], r["short_count"], "🔻 SHORT"
-        
-    tp1_pct = (tp1-price)/price*100
-    tp2_pct = (tp2-price)/price*100
-    sl_pct = (sl-price)/price*100
-    
-    rr1 = abs(tp1_pct/sl_pct) if sl_pct!=0 else 0
-    rr2 = abs(tp2_pct/sl_pct) if sl_pct!=0 else 0
-    
+        tp,sl,cnt,arrow = r["tp_short"],r["sl_short"],r["short_count"],"🔻 SHORT"
+    tp_pct = (tp-price)/price*100; sl_pct = (sl-price)/price*100
+    rr = abs(tp_pct/sl_pct) if sl_pct!=0 else 0
     lines = [f"  {dot(d['signal'])} {n}: {d['value']}" for n,d in r["indicators"].items()]
     return (
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"*{r['symbol']}* {arrow} {'🔥'*min(cnt,5)}\n"
         f"💵 `${price:.4f}` | 24h: {'📈' if pc>=0 else '📉'} {pc:+.2f}%\n"
         f"💹 Vol: {fmt_vol(r['volume_24h'])} | {'📈' if vc>=0 else '📉'} {vc:+.1f}%\n"
-        f"🎯 TP1: `${tp1:.4f}` ({tp1_pct:+.2f}%) [R/R: 1:{rr1:.1f}]\n"
-        f"🎯 TP2: `${tp2:.4f}` ({tp2_pct:+.2f}%) [R/R: 1:{rr2:.1f}]\n"
+        f"🎯 TP: `${tp:.4f}` ({tp_pct:+.2f}%)\n"
         f"🛑 SL: `${sl:.4f}` ({sl_pct:+.2f}%)\n"
+        f"⚖️ R/R: 1:{rr:.1f}\n"
         f"📈 *Gostergeler*\n" + "\n".join(lines) + "\n"
     )
 
@@ -349,10 +328,8 @@ def build_messages(longs, shorts):
     p   = get_tf_params()
     ts  = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
     hdr = f"🤖 *MEXC Futures* | {ts} UTC | TF: `{TIMEFRAME}`\n🟢 Long  🔴 Short  🟡 Notr\n"
-    
-    long_blocks = [fmt_block(r, "long") for r in longs]
-    short_blocks = [fmt_block(r, "short") for r in shorts]
-    
+    m1  = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long")  for r in longs)
+    m2  = hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
     m3  = (
         "📖 *GOSTERGE REHBERI*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -371,7 +348,7 @@ def build_messages(longs, shorts):
         "WaveTrend: Erken donus sinyali\n"
         "Squeeze: Patlama/momentum"
     )
-    return hdr, long_blocks, short_blocks, m3
+    return [m1, m2, m3]
 
 async def run_scan():
     log.info(f"MEXC tarama basliyor... TF={TIMEFRAME}")
@@ -406,39 +383,24 @@ async def run_scan():
     top_shorts = sorted(results, key=lambda x: x["score"])[:TOP_RESULTS]
     log.info(f"En iyi long: {top_longs[0]['symbol']} skor={top_longs[0]['score']}")
 
-    if "YOUR_TOKEN" in TELEGRAM_TOKEN or not TELEGRAM_TOKEN:
+    if "YOUR_TOKEN" in TELEGRAM_TOKEN:
         log.error("TELEGRAM_TOKEN ayarlanmamis!"); return
 
     bot = Bot(token=TELEGRAM_TOKEN)
-    hdr, long_blocks, short_blocks, guide_msg = build_messages(top_longs, top_shorts)
-
-    async def safe_send(text_msg):
+    
+    # Karakter sınırına takılmamak için mesaj listesini sırayla tek tek gönderen kısım
+    for i, msg in enumerate(build_messages(top_longs, top_shorts)):
         try:
-            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text_msg, parse_mode=ParseMode.MARKDOWN)
-            await asyncio.sleep(1.5)  # Flood korumasi
-        except Exception as ex:
-            log.error(f"Telegram gonderim hatasi: {ex}")
+            sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
+            log.info(f"Mesaj {i+1} OK id={sent.message_id}")
+            await asyncio.sleep(2)
+        except Exception as e:
+            log.error(f"Telegram hatasi mesaj {i+1}: {e}")
             try:
-                plain = text_msg.replace("*","").replace("`","").replace("_","")
+                plain = msg.replace("*","").replace("`","").replace("_","")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=plain)
-            except: pass
-
-    # 1. LONG Bloğunu Parçalı Gönder
-    if long_blocks:
-        await safe_send(hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n")
-        for i in range(0, len(long_blocks), 2):
-            chunk = "\n".join(long_blocks[i:i+2])
-            await safe_send(chunk)
-
-    # 2. SHORT Bloğunu Parçalı Gönder
-    if short_blocks:
-        await safe_send(hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n")
-        for i in range(0, len(short_blocks), 2):
-            chunk = "\n".join(short_blocks[i:i+2])
-            await safe_send(chunk)
-
-    # 3. Rehberi Gönder
-    await safe_send(guide_msg)
+            except Exception as e2:
+                log.error(f"Plain de basarisiz: {e2}")
 
     log.info("Tum mesajlar gonderildi [OK]")
 
