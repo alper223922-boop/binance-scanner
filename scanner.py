@@ -387,8 +387,6 @@ async def run_scan():
         log.error("TELEGRAM_TOKEN ayarlanmamis!"); return
 
     bot = Bot(token=TELEGRAM_TOKEN)
-    
-    # Karakter sınırına takılmamak için mesaj listesini sırayla tek tek gönderen kısım
     for i, msg in enumerate(build_messages(top_longs, top_shorts)):
         try:
             sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
