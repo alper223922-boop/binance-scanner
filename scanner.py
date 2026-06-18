@@ -1,7 +1,6 @@
 """
-Futures Scanner - MEXC API - Top 10 Long/Short Sinyali
-Zaman dilimine gore otomatik parametre ayari
-GitHub Actions ile calisir
+Futures Scanner - MEXC API
+Her coin ayri mesaj, 3 TP seviyesi, profesyonel format
 """
 
 import asyncio
@@ -281,20 +280,31 @@ def analyze(symbol, df, ticker):
     add("Squeeze", sq_str, sq_sig)
 
     try:
-        pc  = float(ticker.get("riseFallRate", 0)) * 100
-        v24 = float(ticker.get("amount24", ticker.get("volume24", 0)))
+        pc   = float(ticker.get("riseFallRate", 0)) * 100
+        v24  = float(ticker.get("amount24", ticker.get("volume24", 0)))
         v24h = float(ticker.get("volume24", 0))
         v24h_prev = v24h / (1 + abs(pc) / 100 + 0.001)
         vol_change = ((v24h - v24h_prev) / (v24h_prev + 1)) * 100
     except:
         pc = 0; v24 = 0; vol_change = 0
 
+    # 3 TP seviyesi (ATR bazli)
+    tp1_long  = price + 1.0 * atr_v
+    tp2_long  = price + 2.0 * atr_v
+    tp3_long  = price + 3.5 * atr_v
+    sl_long   = price - 1.5 * atr_v
+
+    tp1_short = price - 1.0 * atr_v
+    tp2_short = price - 2.0 * atr_v
+    tp3_short = price - 3.5 * atr_v
+    sl_short  = price + 1.5 * atr_v
+
     return {
         "symbol": symbol.replace("_USDT",""), "price": price,
         "score": sum(scores), "long_count": scores.count(1), "short_count": scores.count(-1),
         "indicators": ind,
-        "tp_long": price+2.5*atr_v, "sl_long": price-1.5*atr_v,
-        "tp_short": price-2.5*atr_v, "sl_short": price+1.5*atr_v,
+        "tp1_long": tp1_long, "tp2_long": tp2_long, "tp3_long": tp3_long, "sl_long": sl_long,
+        "tp1_short": tp1_short, "tp2_short": tp2_short, "tp3_short": tp3_short, "sl_short": sl_short,
         "price_change_24h": pc, "volume_24h": v24, "vol_change_24h": vol_change,
     }
 
@@ -304,51 +314,56 @@ def fmt_vol(v):
     if v>=1e3: return f"${v/1e3:.0f}K"
     return f"${v:.0f}"
 
-def fmt_block(r, direction):
-    price = r["price"]; pc = r["price_change_24h"]; vc = r.get("vol_change_24h", 0)
-    if direction=="long":
-        tp,sl,cnt,arrow = r["tp_long"],r["sl_long"],r["long_count"],"🚀 LONG"
-    else:
-        tp,sl,cnt,arrow = r["tp_short"],r["sl_short"],r["short_count"],"🔻 SHORT"
-    tp_pct = (tp-price)/price*100; sl_pct = (sl-price)/price*100
-    rr = abs(tp_pct/sl_pct) if sl_pct!=0 else 0
-    lines = [f"  {dot(d['signal'])} {n}: {d['value']}" for n,d in r["indicators"].items()]
-    return (
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"*{r['symbol']}* {arrow} {'🔥'*min(cnt,5)}\n"
-        f"💵 `${price:.4f}` | 24h: {'📈' if pc>=0 else '📉'} {pc:+.2f}%\n"
-        f"💹 Vol: {fmt_vol(r['volume_24h'])} | {'📈' if vc>=0 else '📉'} {vc:+.1f}%\n"
-        f"🎯 TP: `${tp:.4f}` ({tp_pct:+.2f}%)\n"
-        f"🛑 SL: `${sl:.4f}` ({sl_pct:+.2f}%)\n"
-        f"⚖️ R/R: 1:{rr:.1f}\n"
-        f"📈 *Gostergeler*\n" + "\n".join(lines) + "\n"
-    )
+def fmt_pct(val, ref):
+    pct = (val - ref) / ref * 100
+    return f"{val:.4f} ({pct:+.2f}%)"
 
-def build_messages(longs, shorts):
-    p   = get_tf_params()
-    ts  = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
-    hdr = f"🤖 *MEXC Futures* | {ts} UTC | TF: `{TIMEFRAME}`\n🟢 Long  🔴 Short  🟡 Notr\n"
-    m1  = hdr + "\n🚀━━━━━ TOP 10 LONG ━━━━━🚀\n" + "\n".join(fmt_block(r,"long")  for r in longs)
-    m2  = hdr + "\n🔻━━━━━ TOP 10 SHORT ━━━━━🔻\n" + "\n".join(fmt_block(r,"short") for r in shorts)
-    m3  = (
-        "📖 *GOSTERGE REHBERI*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_TF={TIMEFRAME} | RSI={p['rsi_p']} | BB={p['bb_p']} | EMA={p['ema_fast']}/{p['ema_slow']}_\n\n"
-        "MACD: Momentum yonu/gucu\n"
-        "BB%: Bollinger pozisyonu\n"
-        f"EMA{p['ema_fast']}/{p['ema_slow']}: Trend kesisimi\n"
-        "ATR%: Volatilite (TP/SL icin)\n"
-        "CCI: Trend donusu (-100/+100)\n"
-        "W%R: Asiri dip/tepe bolgesi\n"
-        "Fib: Fibonacci destek/direnc\n"
-        "CMF: Kurumsal para akisi\n"
-        f"RSI({p['rsi_p']}): Asiri alim/satim\n"
-        "Supertrend: Trend yonu (Buy/Sell)\n"
-        "Ichimoku: Bulut ustu/alti/ici\n"
-        "WaveTrend: Erken donus sinyali\n"
-        "Squeeze: Patlama/momentum"
+def fmt_coin_msg(r, direction, rank, total):
+    price = r["price"]
+    pc    = r["price_change_24h"]
+    vc    = r.get("vol_change_24h", 0)
+    ind   = r["indicators"]
+
+    if direction == "long":
+        arrow  = "🚀 LONG"
+        tp1,tp2,tp3,sl = r["tp1_long"],r["tp2_long"],r["tp3_long"],r["sl_long"]
+        cnt    = r["long_count"]
+        color  = "🟢"
+    else:
+        arrow  = "🔻 SHORT"
+        tp1,tp2,tp3,sl = r["tp1_short"],r["tp2_short"],r["tp3_short"],r["sl_short"]
+        cnt    = r["short_count"]
+        color  = "🔴"
+
+    sl_pct  = (sl - price) / price * 100
+    rr3     = abs((tp3 - price) / price * 100 / sl_pct) if sl_pct != 0 else 0
+    fire    = "🔥" * min(cnt, 5)
+    lines   = [f"  {dot(d['signal'])} {n}: {d['value']}" for n, d in ind.items()]
+
+    msg = (
+        f"{color} *{r['symbol']}* {arrow} {fire}\n"
+        f"#{rank}/{total} | TF: `{TIMEFRAME}`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💵 Fiyat: `${price:.4f}`\n"
+        f"📊 24h: {'📈' if pc>=0 else '📉'} {pc:+.2f}% | Vol: {fmt_vol(r['volume_24h'])} ({'📈' if vc>=0 else '📉'} {vc:+.1f}%)\n"
+        f"\n"
+        f"🎯 *TP1:* `${fmt_pct(tp1, price)}`\n"
+        f"🎯 *TP2:* `${fmt_pct(tp2, price)}`\n"
+        f"🎯 *TP3:* `${fmt_pct(tp3, price)}`\n"
+        f"🛑 *SL:*  `${fmt_pct(sl, price)}`\n"
+        f"⚖️ R/R (TP3): 1:{rr3:.1f}\n"
+        f"\n"
+        f"📈 *Gostergeler*\n"
+        + "\n".join(lines)
     )
-    return [m1, m2, m3]
+    return msg
+
+def build_header(direction, total):
+    ts = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
+    if direction == "long":
+        return f"🚀━━ TOP {total} LONG ━━🚀\n🤖 MEXC | {ts} UTC | `{TIMEFRAME}`"
+    else:
+        return f"🔻━━ TOP {total} SHORT ━━🔻\n🤖 MEXC | {ts} UTC | `{TIMEFRAME}`"
 
 async def run_scan():
     log.info(f"MEXC tarama basliyor... TF={TIMEFRAME}")
@@ -382,23 +397,36 @@ async def run_scan():
     top_longs  = sorted(results, key=lambda x: x["score"], reverse=True)[:TOP_RESULTS]
     top_shorts = sorted(results, key=lambda x: x["score"])[:TOP_RESULTS]
     log.info(f"En iyi long: {top_longs[0]['symbol']} skor={top_longs[0]['score']}")
+    log.info(f"En iyi short: {top_shorts[0]['symbol']} skor={top_shorts[0]['score']}")
 
     if "YOUR_TOKEN" in TELEGRAM_TOKEN:
         log.error("TELEGRAM_TOKEN ayarlanmamis!"); return
 
     bot = Bot(token=TELEGRAM_TOKEN)
-    for i, msg in enumerate(build_messages(top_longs, top_shorts)):
+
+    async def send(msg):
         try:
             sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
-            log.info(f"Mesaj {i+1} OK id={sent.message_id}")
-            await asyncio.sleep(2)
+            log.info(f"Mesaj OK id={sent.message_id}")
+            await asyncio.sleep(1)
         except Exception as e:
-            log.error(f"Telegram hatasi mesaj {i+1}: {e}")
+            log.error(f"Telegram hatasi: {e}")
             try:
                 plain = msg.replace("*","").replace("`","").replace("_","")
                 await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=plain)
+                await asyncio.sleep(1)
             except Exception as e2:
                 log.error(f"Plain de basarisiz: {e2}")
+
+    # LONG header
+    await send(build_header("long", len(top_longs)))
+    for i, r in enumerate(top_longs):
+        await send(fmt_coin_msg(r, "long", i+1, len(top_longs)))
+
+    # SHORT header
+    await send(build_header("short", len(top_shorts)))
+    for i, r in enumerate(top_shorts):
+        await send(fmt_coin_msg(r, "short", i+1, len(top_shorts)))
 
     log.info("Tum mesajlar gonderildi [OK]")
 
