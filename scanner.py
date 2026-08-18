@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "8402488879:AAEswruz7bCctMQvHn1JD88IGkUBA8xHQYo")
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "8781439297:AAFzVUY7ZoPcvubd94tWD10t3K5jWBqDhnE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1385442139")
 TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
 TOP_RESULTS      = 10
