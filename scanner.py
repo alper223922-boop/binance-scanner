@@ -8,7 +8,7 @@ import os
 import sys
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 import requests
@@ -21,7 +21,7 @@ load_dotenv()
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "YOUR_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1385442139")
 TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
-TOP_RESULTS      = 10
+TOP_RESULTS      = int(os.getenv("TOP_RESULTS", "10"))
 MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
 
 MEXC_BASE = "https://contract.mexc.com"
@@ -359,7 +359,7 @@ def fmt_coin_msg(r, direction, rank, total):
     return msg
 
 def build_header(direction, total):
-    ts = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
+    ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
     if direction == "long":
         return f"🚀━━ TOP {total} LONG ━━🚀\n🤖 MEXC | {ts} UTC | `{TIMEFRAME}`"
     else:
@@ -405,18 +405,30 @@ async def run_scan():
     bot = Bot(token=TELEGRAM_TOKEN)
 
     async def send(msg):
+        # 1) Once Markdown ile dene
         try:
-            sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode=ParseMode.MARKDOWN)
-            log.info(f"Mesaj OK id={sent.message_id}")
+            sent = await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=msg,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            log.info(f"Mesaj OK (markdown) id={sent.message_id}")
             await asyncio.sleep(1)
+            return
         except Exception as e:
-            log.error(f"Telegram hatasi: {e}")
-            try:
-                plain = msg.replace("*","").replace("`","").replace("_","")
-                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=plain)
-                await asyncio.sleep(1)
-            except Exception as e2:
-                log.error(f"Plain de basarisiz: {e2}")
+            log.warning(f"Markdown basarisiz, plain denenecek: {e}")
+
+        # 2) Markdown basarisizsa duz metin gonder
+        try:
+            plain = msg.replace("*", "").replace("`", "").replace("_", "")
+            sent = await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=plain
+            )
+            log.info(f"Mesaj OK (plain) id={sent.message_id}")
+            await asyncio.sleep(1)
+        except Exception as e2:
+            log.error(f"PLAIN DE BASARISIZ - CHAT_ID/TOKEN KONTROL ET: {e2}")
 
     # LONG header
     await send(build_header("long", len(top_longs)))
