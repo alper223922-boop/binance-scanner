@@ -1,6 +1,10 @@
 """
-Futures Scanner - MEXC API
-Her coin ayri mesaj, 3 TP seviyesi, profesyonel format
+Futures Scanner - MEXC API (İyileştirilmiş)
+- Trend filtreli sinyaller
+- Ağırlıklı skorlama
+- İndikatörler trende göre yorumlanır
+- Minimum TP/SL koruması
+- Dinamik fiyat formatı
 """
 
 import asyncio
@@ -8,57 +12,23 @@ import os
 import sys
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 import pandas as pd
 import numpy as np
 import requests
 from telegram import Bot
 from telegram.constants import ParseMode
-from dotenv import load_dotenv
 
-load_dotenv()
+from config import (
+    TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TIMEFRAME, TOP_RESULTS,
+    MIN_VOLUME_USDT, TREND_FILTER, MIN_SCORE, MIN_DIRECTION_SIGNALS,
+    TP_SL, INDICATOR_WEIGHTS, EXCLUDED_SYMBOLS,
+    get_tf_params, format_price,
+)
 
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "YOUR_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1385442139")
-TIMEFRAME        = os.getenv("TIMEFRAME", "Min60")
-TOP_RESULTS      = int(os.getenv("TOP_RESULTS", "10"))
-MIN_VOLUME_USDT  = float(os.getenv("MIN_VOLUME_USDT", "1000000"))
-
-MEXC_BASE = "https://contract.mexc.com"
-HEADERS   = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-
-TF_PARAMS = {
-    "Min15": {
-        "min_candles": 40,
-        "rsi_p": 7, "macd_fast": 6, "macd_slow": 13, "macd_sig": 4,
-        "bb_p": 10, "ema_fast": 10, "ema_slow": 25,
-        "atr_p": 7, "cci_p": 10, "wr_p": 7, "fib_p": 20,
-        "st_p": 7, "st_mult": 2.0, "sq_kc_mult": 1.0,
-        "cmf_p": 10, "wt_n1": 6, "wt_n2": 14,
-    },
-    "Min60": {
-        "min_candles": 60,
-        "rsi_p": 14, "macd_fast": 12, "macd_slow": 26, "macd_sig": 9,
-        "bb_p": 20, "ema_fast": 20, "ema_slow": 50,
-        "atr_p": 14, "cci_p": 20, "wr_p": 14, "fib_p": 50,
-        "st_p": 10, "st_mult": 3.0, "sq_kc_mult": 1.5,
-        "cmf_p": 20, "wt_n1": 10, "wt_n2": 21,
-    },
-    "Hour4": {
-        "min_candles": 60,
-        "rsi_p": 14, "macd_fast": 12, "macd_slow": 26, "macd_sig": 9,
-        "bb_p": 20, "ema_fast": 20, "ema_slow": 50,
-        "atr_p": 14, "cci_p": 20, "wr_p": 14, "fib_p": 100,
-        "st_p": 10, "st_mult": 3.5, "sq_kc_mult": 2.0,
-        "cmf_p": 20, "wt_n1": 10, "wt_n2": 21,
-    },
-}
-
-def get_tf_params():
-    return TF_PARAMS.get(TIMEFRAME, TF_PARAMS["Min60"])
-
-log_formatter  = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-file_handler   = logging.FileHandler("scanner.log", encoding="utf-8")
+# ===== LOG =====
+log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+file_handler  = logging.FileHandler("scanner.log", encoding="utf-8")
 file_handler.setFormatter(log_formatter)
 if sys.platform == "win32":
     try: sys.stdout.reconfigure(encoding="utf-8")
@@ -68,63 +38,87 @@ stream_handler.setFormatter(log_formatter)
 logging.basicConfig(level=logging.INFO, handlers=[file_handler, stream_handler])
 log = logging.getLogger(__name__)
 
+MEXC_BASE = "https://contract.mexc.com"
+HEADERS   = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+
+# ============================================================
+# MEXC API
+# ============================================================
 def get_symbols():
-    r = requests.get(f"{MEXC_BASE}/api/v1/contract/detail", headers=HEADERS, timeout=10)
-    r.raise_for_status()
-    data = r.json().get("data", [])
-    symbols = [d["symbol"] for d in data if d.get("settleCoin") == "USDT" and d.get("state") == 0]
-    log.info(f"Toplam: {len(data)}, USDT: {len(symbols)}")
-    return symbols
+    try:
+        r = requests.get(f"{MEXC_BASE}/api/v1/contract/detail", headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        symbols = [
+            d["symbol"] for d in data
+            if d.get("settleCoin") == "USDT"
+            and d.get("state") == 0
+            and d["symbol"].replace("_USDT", "") not in EXCLUDED_SYMBOLS
+        ]
+        log.info(f"Toplam sembol: {len(symbols)}")
+        return symbols
+    except Exception as e:
+        log.error(f"Sembol listesi hatası: {e}")
+        return []
 
 def get_klines(symbol, interval="Min60", limit=200):
-    url = f"{MEXC_BASE}/api/v1/contract/kline/{symbol}"
-    r = requests.get(url, headers=HEADERS, params={"interval": interval, "limit": limit}, timeout=10)
-    if r.status_code != 200:
-        return None
-    raw = r.json().get("data", {})
-    if not raw:
-        return None
     try:
+        url = f"{MEXC_BASE}/api/v1/contract/kline/{symbol}"
+        r = requests.get(url, headers=HEADERS,
+                         params={"interval": interval, "limit": limit}, timeout=10)
+        if r.status_code != 200:
+            return None
+        raw = r.json().get("data", {})
+        if not raw:
+            return None
         df = pd.DataFrame({
-            "open":  raw.get("open", []),
-            "close": raw.get("close", []),
-            "high":  raw.get("high", []),
-            "low":   raw.get("low", []),
-            "vol":   raw.get("vol", []),
+            "open":  pd.to_numeric(raw.get("open", []),  errors="coerce"),
+            "close": pd.to_numeric(raw.get("close", []), errors="coerce"),
+            "high":  pd.to_numeric(raw.get("high", []),  errors="coerce"),
+            "low":   pd.to_numeric(raw.get("low", []),   errors="coerce"),
+            "vol":   pd.to_numeric(raw.get("vol", []),   errors="coerce"),
         })
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
         return df.dropna()
-    except:
+    except Exception as e:
+        log.debug(f"{symbol} klines hatası: {e}")
         return None
 
 def get_ticker(symbol):
-    r = requests.get(f"{MEXC_BASE}/api/v1/contract/ticker?symbol={symbol}", headers=HEADERS, timeout=5)
-    if r.status_code != 200:
+    try:
+        r = requests.get(f"{MEXC_BASE}/api/v1/contract/ticker?symbol={symbol}",
+                         headers=HEADERS, timeout=5)
+        if r.status_code != 200:
+            return None
+        return r.json().get("data", None)
+    except:
         return None
-    return r.json().get("data", None)
 
+# ============================================================
+# İNDİKATÖR HESAPLAMALARI (ham değerler)
+# ============================================================
 def calc_rsi(close, p=14):
     d = close.diff()
     g = d.clip(lower=0).rolling(p).mean()
     l = (-d.clip(upper=0)).rolling(p).mean()
     return 100 - (100 / (1 + g / (l + 1e-10)))
 
-def calc_macd(close, fast=12, slow=26, sig=9):
-    ml = close.ewm(span=fast,adjust=False).mean() - close.ewm(span=slow,adjust=False).mean()
-    sl = ml.ewm(span=sig,adjust=False).mean()
-    return ml - sl
+def calc_macd_full(close, fast=12, slow=26, sig=9):
+    ml = close.ewm(span=fast, adjust=False).mean() - close.ewm(span=slow, adjust=False).mean()
+    sl = ml.ewm(span=sig, adjust=False).mean()
+    hist = ml - sl
+    return ml, sl, hist
 
 def calc_bb(close, p=20, s=2):
     sma = close.rolling(p).mean()
     sd  = close.rolling(p).std()
-    return sma+s*sd, sma-s*sd
+    return sma + s*sd, sma - s*sd, sma
 
 def calc_ema(close, p):
-    return close.ewm(span=p,adjust=False).mean()
+    return close.ewm(span=p, adjust=False).mean()
 
 def calc_atr(high, low, close, p=14):
-    tr = pd.concat([high-low,(high-close.shift()).abs(),(low-close.shift()).abs()],axis=1).max(axis=1)
+    tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()],
+                   axis=1).max(axis=1)
     return tr.rolling(p).mean()
 
 def calc_cci(high, low, close, p=20):
@@ -135,25 +129,6 @@ def calc_cci(high, low, close, p=20):
 
 def calc_wr(high, low, close, p=14):
     return -100*(high.rolling(p).max()-close)/(high.rolling(p).max()-low.rolling(p).min()+1e-10)
-
-def calc_fibonacci(high, low, close, period=50):
-    hh = high.rolling(period).max().iloc[-1]
-    ll = low.rolling(period).min().iloc[-1]
-    price = close.iloc[-1]
-    diff = hh - ll
-    if diff == 0:
-        return "neutral", "0.5"
-    levels = {
-        "0.236": hh - 0.236 * diff,
-        "0.382": hh - 0.382 * diff,
-        "0.500": hh - 0.500 * diff,
-        "0.618": hh - 0.618 * diff,
-        "0.786": hh - 0.786 * diff,
-    }
-    closest = min(levels, key=lambda k: abs(levels[k] - price))
-    pct_pos = (price - ll) / diff
-    sig = "long" if pct_pos < 0.382 else ("short" if pct_pos > 0.618 else "neutral")
-    return sig, closest
 
 def calc_cmf(high, low, close, vol, period=20):
     mfv = ((close - low) - (high - close)) / (high - low + 1e-10) * vol
@@ -208,77 +183,256 @@ def calc_ichimoku(high, low, close):
     elif price < cloud_bot: return "short",   "Below"
     return "neutral", "Inside"
 
-def dot(s):
-    return "🟢" if s=="long" else ("🔴" if s=="short" else "🟡")
+def calc_fib_levels(high, low, close, period=50):
+    hh = high.rolling(period).max().iloc[-1]
+    ll = low.rolling(period).min().iloc[-1]
+    price = close.iloc[-1]
+    diff = hh - ll
+    if diff == 0:
+        return {}, price, "0.5", 999
+    levels = {
+        "0.236": hh - 0.236 * diff,
+        "0.382": hh - 0.382 * diff,
+        "0.500": hh - 0.500 * diff,
+        "0.618": hh - 0.618 * diff,
+        "0.786": hh - 0.786 * diff,
+    }
+    pct_pos = (price - ll) / diff  # 0=dipte, 1=zirvede
+    closest = min(levels, key=lambda k: abs(levels[k] - price) / price)
+    closest_price = levels[closest]
+    distance_pct = abs(price - closest_price) / price * 100
+    return levels, pct_pos, closest, distance_pct
 
+# ============================================================
+# SİNYAL YORUMLAYICILARI (trend yönüne göre)
+# ============================================================
+def sig_macd(macd_line, signal_line, hist, prev_hist, trend):
+    macd_above = macd_line > signal_line
+    hist_rising = hist > prev_hist
+    hist_pos = hist > 0
+
+    if macd_above and hist_rising and hist_pos:
+        return "long"
+    if (not macd_above) and (not hist_rising) and (not hist_pos):
+        return "short"
+    if trend == "long" and macd_above:
+        return "long"
+    if trend == "short" and (not macd_above):
+        return "short"
+    return "neutral"
+
+def sig_rsi(rsi_val, trend):
+    if trend == "long":
+        if rsi_val < 30:    return "long"
+        if rsi_val > 75:    return "short"
+        if 40 <= rsi_val <= 60: return "long"
+    elif trend == "short":
+        if rsi_val > 70:    return "short"
+        if rsi_val < 25:    return "long"
+        if 40 <= rsi_val <= 60: return "short"
+    return "neutral"
+
+def sig_cci(cci_val, trend):
+    if trend == "long":
+        if cci_val < -100: return "long"
+        if cci_val > 200:  return "short"
+        if -100 <= cci_val <= 100: return "long"
+    elif trend == "short":
+        if cci_val > 100:  return "short"
+        if cci_val < -200: return "long"
+        if -100 <= cci_val <= 100: return "short"
+    return "neutral"
+
+def sig_wr(wr_val, trend):
+    if trend == "long":
+        if wr_val < -80: return "long"
+        if wr_val > -20: return "short"
+    elif trend == "short":
+        if wr_val > -20: return "short"
+        if wr_val < -80: return "long"
+    return "neutral"
+
+def sig_cmf(cmf_val, trend):
+    if cmf_val > 0.15:  return "long"
+    if cmf_val < -0.15: return "short"
+    if cmf_val > 0.05 and trend == "long":  return "long"
+    if cmf_val < -0.05 and trend == "short": return "short"
+    return "neutral"
+
+def sig_bb(price, bb_upper, bb_lower, bb_mid, trend):
+    bb_range = bb_upper - bb_lower
+    pct_b = (price - bb_lower) / (bb_range + 1e-10)
+    if pct_b < 0.05:
+        return "long" if trend != "short" else "neutral"
+    if pct_b > 0.95:
+        return "short" if trend != "long" else "neutral"
+    if trend == "long" and price > bb_mid:  return "long"
+    if trend == "short" and price < bb_mid: return "short"
+    return "neutral"
+
+def sig_supertrend(dir_series):
+    if len(dir_series) < 3:
+        return "neutral"
+    c, p1, p2 = dir_series.iloc[-1], dir_series.iloc[-2], dir_series.iloc[-3]
+    if c == 1 and p1 == 1 and p2 == 1:   return "long"
+    if c == -1 and p1 == -1 and p2 == -1: return "short"
+    return "neutral"
+
+def sig_wavetrend(wt1_val, wt2_val, trend):
+    if wt1_val < -60 and wt1_val > wt2_val: return "long"
+    if wt1_val > 60  and wt1_val < wt2_val: return "short"
+    if trend == "long"  and wt1_val > wt2_val and wt1_val > -20: return "long"
+    if trend == "short" and wt1_val < wt2_val and wt1_val < 20:  return "short"
+    return "neutral"
+
+def sig_fib(pct_pos, distance_pct, trend):
+    # Seviyeye %1.5'ten uzaksa sinyal verme
+    if distance_pct > 1.5:
+        return "neutral"
+    # Destek bölgesi (0.5-0.786) + trend yukarı = long
+    if pct_pos >= 0.5 and trend == "long":
+        return "long"
+    # Direnç bölgesi (0.236-0.5) + trend aşağı = short
+    if pct_pos <= 0.5 and trend == "short":
+        return "short"
+    return "neutral"
+
+def sig_squeeze(sq_on, sq_mom, sq_prev, trend):
+    if sq_on:
+        return "neutral"  # Sıkışma = belirsizlik
+    if sq_mom > 0 and sq_mom > sq_prev and trend == "long":  return "long"
+    if sq_mom < 0 and sq_mom < sq_prev and trend == "short": return "short"
+    return "neutral"
+
+def dot(s):
+    return "🟢" if s == "long" else ("🔴" if s == "short" else "🟡")
+
+# ============================================================
+# ANA ANALİZ
+# ============================================================
 def analyze(symbol, df, ticker):
     p = get_tf_params()
     if df is None or len(df) < p["min_candles"]:
         return None
+
     try:
-        close,high,low,vol = df["close"],df["high"],df["low"],df["vol"]
+        close, high, low, vol = df["close"], df["high"], df["low"], df["vol"]
         price = close.iloc[-1]
     except Exception as e:
-        log.debug(f"{symbol} df hatasi: {e}")
+        log.debug(f"{symbol} df hatası: {e}")
         return None
 
-    ind = {}; scores = []
+    # ---------- Ham indikatör değerleri ----------
+    macd_line, sig_line, hist = calc_macd_full(close, p["macd_fast"], p["macd_slow"], p["macd_sig"])
+    macd_v, sig_v = macd_line.iloc[-1], sig_line.iloc[-1]
+    hist_v, prev_hist_v = hist.iloc[-1], hist.iloc[-2]
 
-    def add(name, val, sig):
-        ind[name] = {"value": val, "signal": sig}
-        scores.append(1 if sig=="long" else (-1 if sig=="short" else 0))
+    bb_upper, bb_lower, bb_mid = calc_bb(close, p["bb_p"])
+    bb_u, bb_l, bb_m = bb_upper.iloc[-1], bb_lower.iloc[-1], bb_mid.iloc[-1]
 
-    h = calc_macd(close, p["macd_fast"], p["macd_slow"], p["macd_sig"])
-    hv,hp = h.iloc[-1],h.iloc[-2]
-    add("MACD", f"{hv:.5f}", "long" if hv>0 and hv>hp else ("short" if hv<0 and hv<hp else "neutral"))
-
-    bbu,bbl = calc_bb(close, p["bb_p"])
-    bb_pct = (price-bbl.iloc[-1])/(bbu.iloc[-1]-bbl.iloc[-1]+1e-10)*100
-    add("BB%", f"{bb_pct:.1f}%", "long" if price<bbl.iloc[-1] else ("short" if price>bbu.iloc[-1] else "neutral"))
-
-    e_fast = calc_ema(close, p["ema_fast"]).iloc[-1]
-    e_slow = calc_ema(close, p["ema_slow"]).iloc[-1]
-    add(f"EMA{p['ema_fast']}/{p['ema_slow']}", f"{e_fast/e_slow:.4f}",
-        "long" if e_fast>e_slow and price>e_fast else ("short" if e_fast<e_slow and price<e_fast else "neutral"))
+    ema_fast = calc_ema(close, p["ema_fast"]).iloc[-1]
+    ema_slow = calc_ema(close, p["ema_slow"]).iloc[-1]
 
     atr_v = calc_atr(high, low, close, p["atr_p"]).iloc[-1]
-    ind["ATR%"] = {"value": f"{atr_v/price*100:.2f}%", "signal": "neutral"}
 
     cci_v = calc_cci(high, low, close, p["cci_p"]).iloc[-1]
-    add("CCI", f"{cci_v:.0f}", "long" if cci_v<-100 else ("short" if cci_v>100 else "neutral"))
-
-    wr = calc_wr(high, low, close, p["wr_p"]).iloc[-1]
-    add("W%R", f"{wr:.0f}", "long" if wr<-80 else ("short" if wr>-20 else "neutral"))
-
-    fib_sig, fib_lvl = calc_fibonacci(high, low, close, p["fib_p"])
-    add("Fib", f"Lvl:{fib_lvl}", fib_sig)
-
+    wr_v  = calc_wr(high, low, close, p["wr_p"]).iloc[-1]
     cmf_v = calc_cmf(high, low, close, vol, p["cmf_p"]).iloc[-1]
-    add("CMF", f"{cmf_v:.3f}", "long" if cmf_v>0.05 else ("short" if cmf_v<-0.05 else "neutral"))
-
     rsi_v = calc_rsi(close, p["rsi_p"]).iloc[-1]
-    add(f"RSI({p['rsi_p']})", f"{rsi_v:.0f}", "long" if rsi_v<30 else ("short" if rsi_v>70 else "neutral"))
 
     st_dir = calc_supertrend(high, low, close, p["st_p"], p["st_mult"])
-    sig = "long" if st_dir.iloc[-1]==1 else "short"
-    add("Supertrend", "Buy" if sig=="long" else "Sell", sig)
-
     ich_sig, ich_pos = calc_ichimoku(high, low, close)
-    add("Ichimoku", ich_pos, ich_sig)
 
     wt1, wt2 = calc_wavetrend(high, low, close, p["wt_n1"], p["wt_n2"])
-    wv = wt1.iloc[-1]
-    sig = "long" if wv<-60 and wv>wt2.iloc[-1] else ("short" if wv>60 and wv<wt2.iloc[-1] else "neutral")
-    add("WaveTrend", f"{wv:.0f}", sig)
+    wt1_v, wt2_v = wt1.iloc[-1], wt2.iloc[-1]
 
     sq_on, sq_mom, sq_prev = calc_squeeze(high, low, close, vol, p["bb_p"], p["sq_kc_mult"])
-    if sq_on:
-        sq_sig, sq_str = "neutral", "Squeezing"
-    else:
-        sq_sig = "long" if sq_mom>0 and sq_mom>sq_prev else ("short" if sq_mom<0 and sq_mom<sq_prev else "neutral")
-        sq_str = "Mom Up" if sq_sig=="long" else ("Mom Dn" if sq_sig=="short" else "Idle")
-    add("Squeeze", sq_str, sq_sig)
+    fib_levels, fib_pct_pos, fib_closest, fib_dist = calc_fib_levels(high, low, close, p["fib_p"])
 
+    # ---------- Önce TREND yönünü belirle ----------
+    st_sig = sig_supertrend(st_dir)
+    ema_sig = "long" if ema_fast > ema_slow and price > ema_fast else (
+              "short" if ema_fast < ema_slow and price < ema_fast else "neutral")
+
+    trend_votes = [st_sig, ich_sig, ema_sig]
+    long_votes  = sum(1 for x in trend_votes if x == "long")
+    short_votes = sum(1 for x in trend_votes if x == "short")
+
+    if long_votes >= TREND_FILTER["min_aligned"]:
+        trend = "long"
+    elif short_votes >= TREND_FILTER["min_aligned"]:
+        trend = "short"
+    else:
+        trend = "neutral"
+
+    # Trend belirsizse hiç sinyal verme
+    if TREND_FILTER["enabled"] and trend == "neutral":
+        return None
+
+    # ---------- Şimdi diğer indikatörleri trende göre yorumla ----------
+    ind = {}
+    weighted_score = 0.0
+    long_signals = 0
+    short_signals = 0
+
+    def add(name, val, sig):
+        nonlocal weighted_score, long_signals, short_signals
+        ind[name] = {"value": val, "signal": sig}
+        weight = INDICATOR_WEIGHTS.get(name.split("(")[0], 1.0)
+        if sig == "long":
+            weighted_score += weight
+            long_signals += 1
+        elif sig == "short":
+            weighted_score -= weight
+            short_signals += 1
+
+    add("MACD",     f"{hist_v:.5f}", sig_macd(macd_v, sig_v, hist_v, prev_hist_v, trend))
+    add("BB%",      f"{(price-bb_l)/(bb_u-bb_l+1e-10)*100:.1f}%", sig_bb(price, bb_u, bb_l, bb_m, trend))
+    add("EMA",      f"{ema_fast/ema_slow:.4f}", ema_sig)
+    add("ATR%",     f"{atr_v/price*100:.2f}%", "neutral")
+    add("CCI",      f"{cci_v:.0f}",   sig_cci(cci_v, trend))
+    add("W%R",      f"{wr_v:.0f}",    sig_wr(wr_v, trend))
+    add("Fib",      f"Lvl:{fib_closest}", sig_fib(fib_pct_pos, fib_dist, trend))
+    add("CMF",      f"{cmf_v:.3f}",   sig_cmf(cmf_v, trend))
+    add(f"RSI({p['rsi_p']})", f"{rsi_v:.0f}", sig_rsi(rsi_v, trend))
+    add("Supertrend", "Buy" if st_sig=="long" else ("Sell" if st_sig=="short" else "Idle"), st_sig)
+    add("Ichimoku",  ich_pos, ich_sig)
+    add("WaveTrend", f"{wt1_v:.0f}",  sig_wavetrend(wt1_v, wt2_v, trend))
+    add("Squeeze",   "Squeezing" if sq_on else (
+                     "Mom Up" if sq_mom>0 and sq_mom>sq_prev else (
+                     "Mom Dn" if sq_mom<0 and sq_mom<sq_prev else "Idle")),
+                     sig_squeeze(sq_on, sq_mom, sq_prev, trend))
+
+    # ---------- Yön ve minimum eşik kontrolleri ----------
+    if long_signals >= MIN_DIRECTION_SIGNALS and weighted_score >= MIN_SCORE:
+        direction = "long"
+    elif short_signals >= MIN_DIRECTION_SIGNALS and weighted_score <= -MIN_SCORE:
+        direction = "short"
+    else:
+        return None
+
+    # Trend ile yön uyumlu mu?
+    if direction != trend:
+        return None
+
+    # ---------- TP/SL (minimum yüzde koruması) ----------
+    def make_levels(direction):
+        if direction == "long":
+            tp1 = price + max(atr_v * TP_SL["tp1_atr_mult"], price * TP_SL["min_tp1_percent"]/100)
+            tp2 = price + max(atr_v * TP_SL["tp2_atr_mult"], price * 2*TP_SL["min_tp1_percent"]/100)
+            tp3 = price + max(atr_v * TP_SL["tp3_atr_mult"], price * TP_SL["min_tp3_percent"]/100)
+            sl  = price - min(atr_v * TP_SL["sl_atr_mult"],  price * TP_SL["max_sl_percent"]/100)
+        else:
+            tp1 = price - max(atr_v * TP_SL["tp1_atr_mult"], price * TP_SL["min_tp1_percent"]/100)
+            tp2 = price - max(atr_v * TP_SL["tp2_atr_mult"], price * 2*TP_SL["min_tp1_percent"]/100)
+            tp3 = price - max(atr_v * TP_SL["tp3_atr_mult"], price * TP_SL["min_tp3_percent"]/100)
+            sl  = price + min(atr_v * TP_SL["sl_atr_mult"],  price * TP_SL["max_sl_percent"]/100)
+        return tp1, tp2, tp3, sl
+
+    tp1_l, tp2_l, tp3_l, sl_l = make_levels("long")
+    tp1_s, tp2_s, tp3_s, sl_s = make_levels("short")
+
+    # ---------- 24h değişim ----------
     try:
         pc   = float(ticker.get("riseFallRate", 0)) * 100
         v24  = float(ticker.get("amount24", ticker.get("volume24", 0)))
@@ -288,35 +442,34 @@ def analyze(symbol, df, ticker):
     except:
         pc = 0; v24 = 0; vol_change = 0
 
-    # 3 TP seviyesi (ATR bazli)
-    tp1_long  = price + 1.0 * atr_v
-    tp2_long  = price + 2.0 * atr_v
-    tp3_long  = price + 3.5 * atr_v
-    sl_long   = price - 1.5 * atr_v
-
-    tp1_short = price - 1.0 * atr_v
-    tp2_short = price - 2.0 * atr_v
-    tp3_short = price - 3.5 * atr_v
-    sl_short  = price + 1.5 * atr_v
-
     return {
-        "symbol": symbol.replace("_USDT",""), "price": price,
-        "score": sum(scores), "long_count": scores.count(1), "short_count": scores.count(-1),
+        "symbol": symbol.replace("_USDT", ""),
+        "price": price,
+        "direction": direction,
+        "trend": trend,
+        "weighted_score": weighted_score,
+        "long_count": long_signals,
+        "short_count": short_signals,
         "indicators": ind,
-        "tp1_long": tp1_long, "tp2_long": tp2_long, "tp3_long": tp3_long, "sl_long": sl_long,
-        "tp1_short": tp1_short, "tp2_short": tp2_short, "tp3_short": tp3_short, "sl_short": sl_short,
-        "price_change_24h": pc, "volume_24h": v24, "vol_change_24h": vol_change,
+        "tp1_long": tp1_l, "tp2_long": tp2_l, "tp3_long": tp3_l, "sl_long": sl_l,
+        "tp1_short": tp1_s, "tp2_short": tp2_s, "tp3_short": tp3_s, "sl_short": sl_s,
+        "price_change_24h": pc,
+        "volume_24h": v24,
+        "vol_change_24h": vol_change,
     }
 
+# ============================================================
+# MESAJ FORMATLAMA
+# ============================================================
 def fmt_vol(v):
-    if v>=1e9: return f"${v/1e9:.2f}B"
-    if v>=1e6: return f"${v/1e6:.1f}M"
-    if v>=1e3: return f"${v/1e3:.0f}K"
+    if v >= 1e9: return f"${v/1e9:.2f}B"
+    if v >= 1e6: return f"${v/1e6:.1f}M"
+    if v >= 1e3: return f"${v/1e3:.0f}K"
     return f"${v:.0f}"
 
 def fmt_pct(val, ref):
     pct = (val - ref) / ref * 100
-    return f"{val:.4f} ({pct:+.2f}%)"
+    return f"{format_price(val)} ({pct:+.2f}%)"
 
 def fmt_coin_msg(r, direction, rank, total):
     price = r["price"]
@@ -325,27 +478,28 @@ def fmt_coin_msg(r, direction, rank, total):
     ind   = r["indicators"]
 
     if direction == "long":
-        arrow  = "🚀 LONG"
-        tp1,tp2,tp3,sl = r["tp1_long"],r["tp2_long"],r["tp3_long"],r["sl_long"]
-        cnt    = r["long_count"]
-        color  = "🟢"
+        arrow = "🚀 LONG"
+        tp1, tp2, tp3, sl = r["tp1_long"], r["tp2_long"], r["tp3_long"], r["sl_long"]
+        cnt = r["long_count"]
+        color = "🟢"
     else:
-        arrow  = "🔻 SHORT"
-        tp1,tp2,tp3,sl = r["tp1_short"],r["tp2_short"],r["tp3_short"],r["sl_short"]
-        cnt    = r["short_count"]
-        color  = "🔴"
+        arrow = "🔻 SHORT"
+        tp1, tp2, tp3, sl = r["tp1_short"], r["tp2_short"], r["tp3_short"], r["sl_short"]
+        cnt = r["short_count"]
+        color = "🔴"
 
-    sl_pct  = (sl - price) / price * 100
-    rr3     = abs((tp3 - price) / price * 100 / sl_pct) if sl_pct != 0 else 0
-    fire    = "🔥" * min(cnt, 5)
-    lines   = [f"  {dot(d['signal'])} {n}: {d['value']}" for n, d in ind.items()]
+    sl_pct = abs(sl - price) / price * 100
+    rr3 = abs((tp3 - price) / price * 100 / sl_pct) if sl_pct != 0 else 0
+    fire = "🔥" * min(cnt, 5)
+    lines = [f"  {dot(d['signal'])} {n}: {d['value']}" for n, d in ind.items()]
 
     msg = (
         f"{color} *{r['symbol']}* {arrow} {fire}\n"
-        f"#{rank}/{total} | TF: `{TIMEFRAME}`\n"
+        f"#{rank}/{total} | TF: `{TIMEFRAME}` | Trend: `{r['trend'].upper()}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💵 Fiyat: `${price:.4f}`\n"
+        f"💵 Fiyat: `${format_price(price)}`\n"
         f"📊 24h: {'📈' if pc>=0 else '📉'} {pc:+.2f}% | Vol: {fmt_vol(r['volume_24h'])} ({'📈' if vc>=0 else '📉'} {vc:+.1f}%)\n"
+        f"📐 Ağırlıklı Skor: `{r['weighted_score']:+.1f}` ({cnt} net sinyal)\n"
         f"\n"
         f"🎯 *TP1:* `${fmt_pct(tp1, price)}`\n"
         f"🎯 *TP2:* `${fmt_pct(tp2, price)}`\n"
@@ -353,35 +507,43 @@ def fmt_coin_msg(r, direction, rank, total):
         f"🛑 *SL:*  `${fmt_pct(sl, price)}`\n"
         f"⚖️ R/R (TP3): 1:{rr3:.1f}\n"
         f"\n"
-        f"📈 *Gostergeler*\n"
+        f"📈 *Göstergeler*\n"
         + "\n".join(lines)
     )
     return msg
 
 def build_header(direction, total):
-    ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+    ts = datetime.utcnow().strftime("%d.%m.%Y %H:%M")
     if direction == "long":
         return f"🚀━━ TOP {total} LONG ━━🚀\n🤖 MEXC | {ts} UTC | `{TIMEFRAME}`"
     else:
         return f"🔻━━ TOP {total} SHORT ━━🔻\n🤖 MEXC | {ts} UTC | `{TIMEFRAME}`"
 
+# ============================================================
+# ANA ÇALIŞTIRICI
+# ============================================================
 async def run_scan():
-    log.info(f"MEXC tarama basliyor... TF={TIMEFRAME}")
-    try:
-        symbols = get_symbols()
-        log.info(f"{len(symbols)} sembol bulundu")
-    except Exception as e:
-        log.error(f"Sembol listesi alinamadi: {e}"); return
+    log.info(f"MEXC tarama başlıyor... TF={TIMEFRAME}")
+    symbols = get_symbols()
+    if not symbols:
+        log.error("Sembol listesi boş!"); return
 
-    results = []; failed = 0
+    results, failed = [], 0
     for i, sym in enumerate(symbols):
         try:
-            df     = get_klines(sym, TIMEFRAME, 200)
+            df = get_klines(sym, TIMEFRAME, 200)
+            if df is None: continue
             ticker = get_ticker(sym)
             if ticker is None: continue
             if float(ticker.get("amount24", 0)) < MIN_VOLUME_USDT: continue
+
             result = analyze(sym, df, ticker)
-            if result: results.append(result)
+            if result:
+                results.append(result)
+                log.info(f"✓ {result['symbol']} → {result['direction'].upper()} "
+                         f"(skor={result['weighted_score']:+.1f}, "
+                         f"{result['long_count']}L/{result['short_count']}S)")
+
             time.sleep(1 if i % 50 == 0 and i > 0 else 0.05)
         except Exception as e:
             failed += 1
@@ -390,58 +552,50 @@ async def run_scan():
             else:
                 log.debug(f"{sym}: {e}")
 
-    log.info(f"Tamamlandi: {len(results)} gecerli, {failed} hata")
+    log.info(f"Tamamlandı: {len(results)} geçerli, {failed} hata")
     if not results:
-        log.warning("Sonuc bulunamadi!"); return
+        log.warning("Sonuç bulunamadı!"); return
 
-    top_longs  = sorted(results, key=lambda x: x["score"], reverse=True)[:TOP_RESULTS]
-    top_shorts = sorted(results, key=lambda x: x["score"])[:TOP_RESULTS]
-    log.info(f"En iyi long: {top_longs[0]['symbol']} skor={top_longs[0]['score']}")
-    log.info(f"En iyi short: {top_shorts[0]['symbol']} skor={top_shorts[0]['score']}")
+    long_results  = [r for r in results if r["direction"] == "long"]
+    short_results = [r for r in results if r["direction"] == "short"]
 
-    if "YOUR_TOKEN" in TELEGRAM_TOKEN:
-        log.error("TELEGRAM_TOKEN ayarlanmamis!"); return
+    top_longs  = sorted(long_results,  key=lambda x: x["weighted_score"], reverse=True)[:TOP_RESULTS]
+    top_shorts = sorted(short_results, key=lambda x: x["weighted_score"])[:TOP_RESULTS]
+
+    log.info(f"Long: {len(top_longs)} | Short: {len(top_shorts)}")
+
+    if "YOUR_TOKEN" in TELEGRAM_TOKEN or not TELEGRAM_TOKEN:
+        log.error("TELEGRAM_TOKEN ayarlanmamış!"); return
 
     bot = Bot(token=TELEGRAM_TOKEN)
 
     async def send(msg):
-        # 1) Once Markdown ile dene
         try:
-            sent = await bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=msg,
-                parse_mode=ParseMode.MARKDOWN
-            )
-            log.info(f"Mesaj OK (markdown) id={sent.message_id}")
+            sent = await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg,
+                                          parse_mode=ParseMode.MARKDOWN)
+            log.info(f"Mesaj OK id={sent.message_id}")
             await asyncio.sleep(1)
-            return
         except Exception as e:
-            log.warning(f"Markdown basarisiz, plain denenecek: {e}")
+            log.error(f"Telegram hatası: {e}")
+            try:
+                plain = msg.replace("*","").replace("`","").replace("_","")
+                await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=plain)
+                await asyncio.sleep(1)
+            except Exception as e2:
+                log.error(f"Plain de başarısız: {e2}")
 
-        # 2) Markdown basarisizsa duz metin gonder
-        try:
-            plain = msg.replace("*", "").replace("`", "").replace("_", "")
-            sent = await bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=plain
-            )
-            log.info(f"Mesaj OK (plain) id={sent.message_id}")
-            await asyncio.sleep(1)
-        except Exception as e2:
-            log.error(f"PLAIN DE BASARISIZ - CHAT_ID/TOKEN KONTROL ET: {e2}")
+    if top_longs:
+        await send(build_header("long", len(top_longs)))
+        for i, r in enumerate(top_longs):
+            await send(fmt_coin_msg(r, "long", i+1, len(top_longs)))
 
-    # LONG header
-    await send(build_header("long", len(top_longs)))
-    for i, r in enumerate(top_longs):
-        await send(fmt_coin_msg(r, "long", i+1, len(top_longs)))
+    if top_shorts:
+        await send(build_header("short", len(top_shorts)))
+        for i, r in enumerate(top_shorts):
+            await send(fmt_coin_msg(r, "short", i+1, len(top_shorts)))
 
-    # SHORT header
-    await send(build_header("short", len(top_shorts)))
-    for i, r in enumerate(top_shorts):
-        await send(fmt_coin_msg(r, "short", i+1, len(top_shorts)))
-
-    log.info("Tum mesajlar gonderildi [OK]")
+    log.info("Tüm mesajlar gönderildi ✅")
 
 if __name__ == "__main__":
-    log.info("Scanner basliyor...")
+    log.info("Scanner başlıyor...")
     asyncio.run(run_scan())
